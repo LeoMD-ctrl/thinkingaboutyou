@@ -1,12 +1,13 @@
-// Pense à toi — two little beings that drift closer when we think of each other.
-// No framework, no build step.
+// Pense à toi — a little lake. The people you love live on the far shore.
+// Touch their home to send a lantern; slide the sky to travel in time;
+// hold your dock to light a candle ("I'm free then"). Two candles make a star.
 
-import { COLORS, colorOf, avatarSVG, installGrain } from './avatar.js';
-import { mountSky, slotWords, slotDate, isPast } from './sky.js';
+import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, backSVG, frontSVG, placeSVG, plotSVG, glowSprite } from './scene.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const NS = 'http://www.w3.org/2000/svg';
 
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -14,16 +15,21 @@ const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window &&
 
 const params = new URLSearchParams(location.search);
 let invite = (params.get('invite') || '').toUpperCase() || null;
-let openSkyFor = params.get('sky');
+let travelTo = params.get('t');
+
+const HOURS_PER_SCREEN = 10;
+const MAX_OFFSET = 7 * 24 - 1;
+const LANTERN_TINTS = ['#FFD36E', '#FFB98A', '#FFC2D4', '#D8C8FF'];
 
 const state = {
   token: load('token'),
   data: null,
-  dataKey: '',
   inviter: null,
-  view: 'home',
-  page: 0,
-  toReceive: new Map(), // person id → number of hearts to show arriving
+  offset: 0, // hours travelled into the future
+  phase: null,
+  slot: undefined,
+  arriving: new Set(), // ping timestamps currently flying in
+  known: null, // ping timestamps already shown
   config: null,
 };
 
@@ -45,468 +51,669 @@ async function api(path, { method = 'GET', body } = {}) {
     save('token', null);
     state.token = null;
     state.data = null;
-    render();
+    showWelcome();
   }
-  if (!res.ok) throw new Error(json.error || 'Oups, petit souci 🥲');
+  if (!res.ok) throw new Error(json.error || 'Oups, petit souci');
   return json;
 }
 
-let toastTimer;
-function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+// What the world shows: your data, or a preview before you have an account.
+function world() {
+  if (state.data) return state.data;
+  return { me: { candles: [] }, people: state.inviter ? [{ ...state.inviter, pingsFromThem: [], pingsFromMe: [], candles: [] }] : [], moments: [] };
 }
 
-// ---------- Closeness ----------
+// ---------- Time ----------
 
-// Recent thoughts count more; each side's warmth is capped so one person alone
-// can only bring them halfway. They touch when both have been thinking.
-function warmth(times) {
-  const now = Date.now();
-  return Math.min(4, times.reduce((s, t) => s + 0.5 ** ((now - t) / (36 * 3600000)), 0));
+const BANDS = [
+  { key: 'matin', word: 'matin', from: 6, to: 12, start: 9 },
+  { key: 'midi', word: 'midi', from: 12, to: 14.25, start: 12 },
+  { key: 'aprem', word: 'après-midi', from: 14.25, to: 18.5, start: 14.5 },
+  { key: 'soir', word: 'soir', from: 18.5, to: 23, start: 19 },
+];
+const pad = (n) => String(n).padStart(2, '0');
+const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const hourOf = (d) => d.getHours() + d.getMinutes() / 60;
+const viewTime = () => new Date(Date.now() + state.offset * 3600000);
+
+function slotAt(d) {
+  const h = hourOf(d);
+  const band = BANDS.find((b) => h >= b.from && h < b.to);
+  return band ? `${dateKey(d)}:${band.key}` : null;
 }
-function closeness(p) {
-  const a = warmth(p.pingsFromMe);
-  const b = warmth(p.pingsFromThem);
-  let c = (2 * Math.min(a, b) + Math.max(a, b)) / 12;
-  if (momentWith(p.id)) c = Math.max(c, 0.85);
-  return Math.min(1, c);
+
+function slotStart(slot) {
+  const [date, key] = slot.split(':');
+  const [y, m, d] = date.split('-').map(Number);
+  const band = BANDS.find((b) => b.key === key);
+  return new Date(y, m - 1, d, Math.floor(band.start), (band.start % 1) * 60);
 }
-const momentWith = (pid) => state.data?.moments.find((m) => m.with?.id === pid);
-const sharedSlots = (p) => p.sky.mine.filter((s) => p.sky.theirs.includes(s) && !isPast(s)).sort();
 
-// ---------- Small drawings ----------
+function dayWord(d) {
+  const n = Math.round((new Date(d).setHours(12, 0, 0, 0) - new Date().setHours(12, 0, 0, 0)) / 86400000);
+  if (n === 0) return "aujourd'hui";
+  if (n === 1) return 'demain';
+  return new Date(d).toLocaleDateString('fr-FR', { weekday: 'long' });
+}
 
-const GROUND = `
-<svg viewBox="0 0 360 80" preserveAspectRatio="none" aria-hidden="true">
-  <defs><radialGradient id="ground-shade" cx="50%" cy="20%" r="75%"><stop offset=".6" stop-color="#CDB4A1" stop-opacity="0"/><stop offset="1" stop-color="#CDB4A1" stop-opacity="1"/></radialGradient></defs>
-  <ellipse cx="180" cy="40" rx="178" ry="36" fill="#EAD9CA"/>
-  <ellipse cx="180" cy="40" rx="178" ry="36" fill="url(#ground-shade)" filter="url(#grain)"/>
-</svg>`;
+function slotWords(slot) {
+  const d = slotStart(slot);
+  const band = BANDS.find((b) => b.key === slot.split(':')[1]);
+  const day = dayWord(d);
+  if (day === "aujourd'hui") return `${band.key === 'aprem' ? 'cet' : 'ce'} ${band.word}`;
+  return `${day} ${band.word}`;
+}
 
-function heartSVG(color) {
-  const c = colorOf(color);
-  return `<svg viewBox="0 0 24 22"><defs><radialGradient id="hs-${color}" cx="35%" cy="30%" r="80%"><stop offset=".4" stop-color="${c.shade}" stop-opacity="0"/><stop offset="1" stop-color="${c.shade}"/></radialGradient></defs>
-    <path d="M12 21C5.5 16.3 2 12.9 2 8.7 2 5.6 4.4 3.3 7.3 3.3c1.9 0 3.6 1 4.7 2.6 1.1-1.6 2.8-2.6 4.7-2.6 2.9 0 5.3 2.3 5.3 5.4 0 4.2-3.5 7.6-10 12.3z" fill="${c.body}"/>
-    <path d="M12 21C5.5 16.3 2 12.9 2 8.7 2 5.6 4.4 3.3 7.3 3.3c1.9 0 3.6 1 4.7 2.6 1.1-1.6 2.8-2.6 4.7-2.6 2.9 0 5.3 2.3 5.3 5.4 0 4.2-3.5 7.6-10 12.3z" fill="url(#hs-${color})" filter="url(#grain)"/></svg>`;
+function timeWords(d) {
+  const slot = slotAt(d);
+  if (slot) return slotWords(slot);
+  const h = hourOf(d);
+  const night = new Date(d);
+  if (h < 6) night.setDate(night.getDate() - 1);
+  const day = dayWord(night);
+  return day === "aujourd'hui" ? 'cette nuit' : `${day}, la nuit`;
+}
+
+// Phase blend across the day.
+const KEYS = [[0, 'night'], [5, 'night'], [7, 'morning'], [10.5, 'day'], [16.5, 'day'], [19, 'dusk'], [21.5, 'night'], [24, 'night']];
+function blendAt(h) {
+  for (let i = 0; i < KEYS.length - 1; i++) {
+    const [a, from] = KEYS[i];
+    const [b, to] = KEYS[i + 1];
+    if (h >= a && h < b) return { from, to, k: (h - a) / (b - a) };
+  }
+  return { from: 'night', to: 'night', k: 0 };
+}
+
+// ---------- World ----------
+
+const layerUrls = {};
+function layerUrl(kind, phase) {
+  const key = `${kind}-${phase}`;
+  if (!layerUrls[key]) {
+    const svg = kind === 'back' ? backSVG(PHASES[phase]) : frontSVG(PHASES[phase]);
+    layerUrls[key] = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  }
+  return layerUrls[key];
+}
+
+function buildWorld() {
+  const phases = Object.keys(PHASES);
+  const svgOpen = (cls) => `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">`;
+  app.innerHTML = `
+    <div class="world">
+      <div class="layers">${phases.map((p) => `<img alt="" data-back="${p}" src="${layerUrl('back', p)}">`).join('')}</div>
+      ${svgOpen('bodies')}<g id="moon"></g><g id="sun"></g></svg>
+      <div class="layers">${phases.map((p) => `<img alt="" data-front="${p}" src="${layerUrl('front', p)}">`).join('')}</div>
+      ${svgOpen('overlay')}
+        <g id="o-reflect"></g><g id="o-static"></g><g id="o-fx"></g>
+        <g id="o-cloud" opacity="0"><path d="M112 116a26 26 0 0 1 38-22 34 34 0 0 1 62 0 30 30 0 0 1 54 12 22 22 0 0 1 12 36H118a22 22 0 0 1-6-26z" fill="#FFF8F1" opacity=".92"/><text x="${W / 2}" y="129" text-anchor="middle"></text></g>
+      </svg>
+      <div class="hint"></div>
+      <div class="top"></div>
+    </div>
+    <div class="card-root"></div>`;
+  state.phase = null;
+  state.slot = undefined;
+  bindGestures($('.overlay', app));
+  applyTime();
+}
+
+function applyTime() {
+  const overlay = $('.overlay', app);
+  if (!overlay) return;
+  const t = viewTime();
+  const h = hourOf(t);
+  const { from, to, k } = blendAt(h);
+  for (const kind of ['back', 'front']) {
+    app.querySelectorAll(`[data-${kind}]`).forEach((img) => {
+      const p = img.dataset[kind];
+      const on = p === from ? 1 : p === to ? k : 0;
+      img.style.opacity = on;
+      img.style.zIndex = p === to ? 2 : p === from ? 1 : 0;
+    });
+  }
+  const dominant = k < 0.5 ? from : to;
+  const c = PHASES[dominant];
+
+  // Sun by day, moon by night, sliding along an arc behind the hills.
+  const sunT = (h - 6) / 15;
+  const moonT = ((h - 19.5 + 24) % 24) / 11;
+  const arc = (u, top) => ({ x: 20 + 350 * u, y: 480 - top * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) });
+  const sun = arc(sunT, 340);
+  const moon = arc(moonT, 300);
+  const edge = (u) => Math.max(0, Math.min(1, u * 10, (1 - u) * 10));
+  const sunVis = edge(sunT);
+  const moonVis = edge(moonT) * (1 - 0.6 * sunVis);
+  const sunUp = sunVis > 0;
+  const moonUp = moonVis > 0;
+  const sunG = $('#sun', app);
+  const moonG = $('#moon', app);
+  if (dominant !== state.phase) {
+    sunG.innerHTML = `<image href="${glowSprite(c.sunHalo, 200)}" x="-120" y="-120" width="240" height="240"/><circle r="44" fill="${c.sun}"/>`;
+    moonG.innerHTML = `<image href="${glowSprite('#C9B8F0', 160)}" x="-90" y="-90" width="180" height="180" opacity=".8"/><circle r="28" fill="#FFF4D6"/><circle cx="9" cy="-6" r="24" fill="#5B4F8E" opacity=".18"/>`;
+  }
+  sunG.setAttribute('transform', `translate(${sun.x} ${sun.y})`);
+  sunG.style.opacity = sunVis;
+  moonG.setAttribute('transform', `translate(${moon.x} ${moon.y})`);
+  moonG.style.opacity = moonVis;
+
+  // Its reflection on the lake when low on the horizon.
+  const body = sunUp ? sun : moon;
+  const low = Math.max(0, 1 - (480 - body.y) / 160);
+  $('#o-reflect', app).innerHTML = (sunUp || moonUp) && low > 0.05
+    ? `<g stroke="${sunUp ? c.sun : '#FFF4D6'}" stroke-width="4" fill="none" opacity="${0.75 * low}">
+         <ellipse cx="${body.x}" cy="512" rx="58" ry="5"/><ellipse cx="${body.x}" cy="526" rx="34" ry="3"/><ellipse cx="${body.x}" cy="538" rx="16" ry="2"/></g>`
+    : '';
+
+  // The day written in a cloud while you travel.
+  const cloud = $('#o-cloud', app);
+  cloud.style.opacity = state.offset > 0.3 ? 1 : 0;
+  $('text', cloud).textContent = timeWords(t);
+
+  const slot = slotAt(t);
+  if (dominant !== state.phase || slot !== state.slot) {
+    state.phase = dominant;
+    state.slot = slot;
+    drawStatic();
+  }
+}
+
+// Places, lights, candles, stars and lanterns.
+function drawStatic() {
+  const g = $('#o-static', app);
+  if (!g) return;
+  const c = PHASES[state.phase || 'day'];
+  const { me, people, moments } = world();
+  const slot = state.slot;
+  const traveling = state.offset > 0.3;
+  let out = '';
+
+  // Homes of the people you love. Their window glows warmer the more they thought of you.
+  people.slice(0, PLACES.length).forEach((p, i) => {
+    const place = PLACES[i];
+    const warmth = Math.min(1, (p.pingsFromThem || []).reduce((s, t) => s + 0.5 ** ((Date.now() - t) / (8 * 3600000)), 0) / 2);
+    const glow = Math.min(1, c.lit * 0.5 + warmth * 0.8);
+    const [wx, wy] = place.window;
+    out += `<image class="window-glow" data-glow="${i}" href="${glowSprite(c.light, 120)}" x="${wx - 34}" y="${wy - 34}" width="68" height="68" opacity="${glow}"/>`;
+    out += placeSVG(place, c);
+    out += `<rect data-place="${i}" x="${place.x - 30}" y="${place.y - 78}" width="60" height="88" fill-opacity="0" pointer-events="all"/>`;
+  });
+  if (people.length < PLACES.length && state.data) {
+    const place = PLACES[people.length];
+    out += plotSVG(place, c);
+    out += `<rect data-plot x="${place.x - 26}" y="${place.y - 48}" width="52" height="56" fill-opacity="0" pointer-events="all"/>`;
+  }
+
+  // Candles at the moment you are looking at.
+  if (slot) {
+    if (me.candles.includes(slot)) out += candleSVG(DOCK.x, DOCK.y - 2, 1, 'mine');
+    people.slice(0, PLACES.length).forEach((p, i) => {
+      if ((p.candles || []).includes(slot)) out += candleSVG(PLACES[i].x + 18, PLACES[i].y + 2, 0.6);
+    });
+  }
+
+  // Stars: moments together. The one you are looking at shines big above the lake;
+  // upcoming ones wait small above their home, touch them to travel there.
+  for (const m of moments) {
+    const i = people.findIndex((p) => p.id === m.with?.id);
+    if (i < 0 || i >= PLACES.length) continue;
+    if (m.slot === slot) {
+      out += starSVG((DOCK.x + PLACES[i].x) / 2, 370, 1.4, m.slot);
+    } else if (!traveling && slotStart(m.slot) > Date.now() - 3 * 3600000) {
+      out += starSVG(PLACES[i].x, PLACES[i].y - 112, 0.7, m.slot);
+    }
+  }
+
+  // Lanterns: thoughts received in the last day, floating in your sky.
+  if (!traveling) {
+    people.forEach((p, i) => {
+      (p.pingsFromThem || []).filter((t) => Date.now() - t < 86400000 && !state.arriving.has(t)).slice(-6).forEach((t) => {
+        const { x, y } = lanternSpot(t);
+        out += lanternSVG(x, y, LANTERN_TINTS[i % LANTERN_TINTS.length], p.id, t);
+      });
+    });
+  }
+  g.innerHTML = out;
+  updateHint();
+}
+
+function lanternSpot(t) {
+  const r1 = Math.abs(Math.sin(t * 12.9898) * 43758.5453) % 1;
+  const r2 = Math.abs(Math.sin(t * 78.233) * 12345.678) % 1;
+  return { x: 40 + r1 * 310, y: 170 + r2 * 220 };
+}
+
+function lanternSVG(x, y, tint, pid, t, scale = 1) {
+  return `<g class="lantern" data-lantern="${pid}" data-x="${x}" data-y="${y}" transform="translate(${x} ${y}) scale(${scale})">
+    <g class="bob" style="animation-delay:-${(t % 4000) / 1000}s">
+      <image href="${glowSprite(tint, 120)}" x="-28" y="-28" width="56" height="56"/>
+      <ellipse rx="7" ry="9" fill="${tint}"/>
+      <rect x="-4" y="-11" width="8" height="3" rx="1.5" fill="#355A6E" opacity=".55"/>
+      <circle r="22" fill-opacity="0" pointer-events="all"/>
+    </g></g>`;
+}
+
+function candleSVG(x, y, s = 1, cls = '') {
+  return `<g class="candle ${cls}" transform="translate(${x} ${y}) scale(${s})">
+    <image href="${glowSprite('#FFD36E', 120)}" x="-30" y="-44" width="60" height="60" opacity=".9"/>
+    <rect x="-4" y="-14" width="8" height="14" rx="2.5" fill="#FFF6EA"/>
+    <path class="flame" d="M0 -26c3 4 4 6 4 8a4 4 0 0 1-8 0c0-2 1-4 4-8z" fill="#FFB547"/></g>`;
+}
+
+function starSVG(x, y, s, slot) {
+  return `<g class="star" data-star="${slot}" transform="translate(${x} ${y}) scale(${s})">
+    <image href="${glowSprite('#FFF1B8', 140)}" x="-40" y="-40" width="80" height="80"/>
+    <path d="M0 -14 C2 -4 4 -2 14 0 C4 2 2 4 0 14 C-2 4 -4 2 -14 0 C-4 -2 -2 -4 0 -14Z" fill="#FFF8DA"/>
+    <circle r="24" fill-opacity="0" pointer-events="all"/></g>`;
+}
+
+// ---------- Little animations ----------
+
+const fx = () => $('#o-fx', app);
+function el(markup) {
+  const g = document.createElementNS(NS, 'g');
+  g.innerHTML = markup;
+  fx().appendChild(g);
+  return g;
+}
+const ease = (u) => (u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2);
+
+function animate(duration, step) {
+  return new Promise((done) => {
+    const t0 = performance.now();
+    const frame = (now) => {
+      const u = Math.min(1, (now - t0) / duration);
+      step(u);
+      if (u < 1) requestAnimationFrame(frame);
+      else done();
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
+function label(x, y, text) {
+  const w = text.length * 7.6 + 26;
+  const g = el(`<g class="label" transform="translate(${x} ${y})"><rect x="${-w / 2}" y="-15" width="${w}" height="28" rx="14" fill="#FFF8F1" opacity=".94"/><text y="4" text-anchor="middle">${esc(text)}</text></g>`);
+  setTimeout(() => g.remove(), 2200);
+}
+
+function ripples(x, y) {
+  for (let i = 0; i < 3; i++) {
+    const g = el(`<ellipse cx="${x}" cy="${y}" rx="8" ry="2" fill="none" stroke="#E9F7FB" stroke-width="2.5"/>`);
+    const e = g.firstChild;
+    setTimeout(() => animate(1500, (u) => {
+      e.setAttribute('rx', 8 + u * 110);
+      e.setAttribute('ry', 2 + u * 24);
+      e.setAttribute('opacity', 1 - u);
+    }).then(() => g.remove()), i * 220);
+  }
+}
+
+// A lantern flying along an arc, getting smaller as it goes far.
+function flyLantern(from, to, tint, s0, s1, duration = 1500) {
+  const g = el(lanternSVG(from.x, from.y, tint, '', 0, s0));
+  const lantern = g.firstElementChild;
+  const ctrl = { x: (from.x + to.x) / 2, y: Math.min(from.y, to.y) - 140 };
+  return animate(duration, (u) => {
+    const v = ease(u);
+    const x = (1 - v) ** 2 * from.x + 2 * (1 - v) * v * ctrl.x + v ** 2 * to.x;
+    const y = (1 - v) ** 2 * from.y + 2 * (1 - v) * v * ctrl.y + v ** 2 * to.y;
+    lantern.setAttribute('transform', `translate(${x} ${y}) scale(${s0 + (s1 - s0) * v})`);
+  }).then(() => g.remove());
+}
+
+function flash(i) {
+  const glow = $(`[data-glow="${i}"]`, app);
+  if (!glow) return;
+  const base = Number(glow.getAttribute('opacity'));
+  const [x, y] = [Number(glow.getAttribute('x')), Number(glow.getAttribute('y'))];
+  animate(1200, (u) => {
+    const k = Math.sin(Math.PI * u);
+    glow.setAttribute('opacity', Math.min(1, base + k));
+    glow.setAttribute('width', 68 + 50 * k);
+    glow.setAttribute('height', 68 + 50 * k);
+    glow.setAttribute('x', x - 25 * k);
+    glow.setAttribute('y', y - 25 * k);
+  });
+}
+
+async function sendThought(i) {
+  const p = world().people[i];
+  if (!p || !state.data) return;
+  const place = PLACES[i];
+  label(place.x, place.y - 96, p.name);
+  save('pinged', '1');
+  api('/api/pings', { method: 'POST', body: { to: p.id } }).catch(() => {});
+  ripples(DOCK.x, DOCK.y + 10);
+  const [wx, wy] = place.window;
+  await flyLantern({ x: DOCK.x, y: DOCK.y - 20 }, { x: wx, y: wy }, '#FFD36E', 1.1, 0.35);
+  flash(i);
+  ripples((DOCK.x + place.x) / 2, LAKE_CENTER.y - 30);
+  p.pingsFromMe.push(Date.now());
+  updateHint();
+}
+
+// Thoughts that arrived while you were away rise from their home into your sky.
+async function receiveNew() {
+  if (!state.data) return;
+  const fresh = [];
+  state.data.people.forEach((p, i) => {
+    for (const t of p.pingsFromThem) if (!state.known.has(t)) fresh.push({ t, i });
+  });
+  fresh.forEach(({ t }) => { state.known.add(t); state.arriving.add(t); });
+  if (!fresh.length) return;
+  drawStatic();
+  for (const { t, i } of fresh.slice(-6)) {
+    if (i >= PLACES.length) { state.arriving.delete(t); continue; }
+    const [wx, wy] = PLACES[i].window;
+    flash(i);
+    await new Promise((r) => setTimeout(r, 250));
+    const spot = lanternSpot(t);
+    const done = flyLantern({ x: wx, y: wy }, spot, LANTERN_TINTS[i % LANTERN_TINTS.length], 0.35, 1, 1700)
+      .then(() => { state.arriving.delete(t); drawStatic(); });
+    await new Promise((r) => setTimeout(r, 450));
+    if (fresh.length === 1) await done;
+  }
+}
+
+async function toggleCandle() {
+  if (!state.data) return;
+  const slot = state.slot;
+  if (!slot) {
+    label(DOCK.x, DOCK.y - 50, 'la nuit, on dort');
+    return;
+  }
+  const mine = new Set(state.data.me.candles);
+  const lighting = !mine.has(slot);
+  if (lighting) mine.add(slot); else mine.delete(slot);
+  state.data.me.candles = [...mine].sort();
+  save('candled', '1');
+  drawStatic();
+  if (!lighting) {
+    const puff = el(`<circle cx="${DOCK.x}" cy="${DOCK.y - 26}" r="4" fill="#FFF8F1" opacity=".8"/>`);
+    animate(900, (u) => {
+      puff.firstChild.setAttribute('cy', DOCK.y - 26 - 30 * u);
+      puff.firstChild.setAttribute('r', 4 + 8 * u);
+      puff.firstChild.setAttribute('opacity', 0.8 * (1 - u));
+    }).then(() => puff.remove());
+  } else {
+    label(DOCK.x, DOCK.y - 56, `libre ${slotWords(slot)}`);
+  }
+  const before = new Set(state.data.moments.map((m) => m.id));
+  try {
+    const data = await api('/api/candles', { method: 'PUT', body: { slots: state.data.me.candles } });
+    setData(data);
+    const born = data.moments.find((m) => !before.has(m.id));
+    if (born) {
+      const who = born.with?.name;
+      ripples(LAKE_CENTER.x, LAKE_CENTER.y);
+      setTimeout(() => label(LAKE_CENTER.x, 330, `✨ avec ${who}`), 300);
+    }
+    drawStatic();
+  } catch {
+    /* the world stays as you left it; it will sync on the next refresh */
+  }
+}
+
+// ---------- Time travel ----------
+
+let returnTimer;
+let glide;
+function setOffset(o) {
+  state.offset = Math.max(0, Math.min(MAX_OFFSET, o));
+  applyTime();
+}
+
+function glideTo(target, duration = 1200) {
+  cancelAnimationFrame(glide);
+  const start = state.offset;
+  const t0 = performance.now();
+  const frame = (now) => {
+    const u = Math.min(1, (now - t0) / duration);
+    setOffset(start + (target - start) * ease(u));
+    if (u < 1) glide = requestAnimationFrame(frame);
+  };
+  glide = requestAnimationFrame(frame);
+}
+
+function scheduleReturn() {
+  clearTimeout(returnTimer);
+  if (state.offset > 0) returnTimer = setTimeout(() => glideTo(0, 1600), 9000);
+}
+
+// Settle on the middle of the nearest part of the day.
+function snap() {
+  const t = viewTime();
+  const h = hourOf(t);
+  const band = BANDS.find((b) => h >= b.from - 0.75 && h < b.to + 0.75);
+  if (state.offset < 0.4) return glideTo(0, 500);
+  if (!band) return undefined;
+  const mid = (Math.max(band.from, band.start) + band.to) / 2;
+  const target = state.offset + (mid - h);
+  return glideTo(target > 0.4 ? target : 0, 500);
+}
+
+function travelToSlot(slot) {
+  const d = slotStart(slot);
+  const band = BANDS.find((b) => b.key === slot.split(':')[1]);
+  d.setHours(0, 0, 0, 0);
+  const mid = new Date(d.getTime() + ((Math.max(band.from, band.start) + band.to) / 2) * 3600000);
+  glideTo((mid - Date.now()) / 3600000, 1600);
+  scheduleReturn();
+}
+
+function bindGestures(svg) {
+  let g = null;
+  let press;
+  const toView = (e) => {
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+    return { x: pt.x, y: pt.y };
+  };
+  svg.addEventListener('pointerdown', (e) => {
+    cancelAnimationFrame(glide);
+    clearTimeout(returnTimer);
+    const v = toView(e);
+    g = {
+      x: e.clientX, y: e.clientY, start: state.offset, moved: false, held: false,
+      target: e.target.closest('[data-place],[data-plot],[data-lantern],[data-star]'),
+      last: [{ x: e.clientX, t: performance.now() }],
+    };
+    svg.setPointerCapture(e.pointerId);
+    if (v.y > 580 && state.data) {
+      press = setTimeout(() => { if (g && !g.moved) { g.held = true; toggleCandle(); } }, 450);
+    }
+  });
+  svg.addEventListener('pointermove', (e) => {
+    if (!g) return;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    if (!g.moved && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+      g.moved = true;
+      clearTimeout(press);
+    }
+    if (!g.moved) {
+      if (Math.abs(dy) > 12) clearTimeout(press);
+      return;
+    }
+    setOffset(g.start - (dx / svg.clientWidth) * HOURS_PER_SCREEN);
+    g.last.push({ x: e.clientX, t: performance.now() });
+    if (g.last.length > 5) g.last.shift();
+  });
+  const end = (e) => {
+    clearTimeout(press);
+    if (!g) return;
+    const gesture = g;
+    g = null;
+    if (gesture.held) return;
+    if (gesture.moved) {
+      save('travelled', '1');
+      const [a, b] = [gesture.last[0], gesture.last[gesture.last.length - 1]];
+      let v = b.t > a.t ? -((b.x - a.x) / svg.clientWidth) * HOURS_PER_SCREEN / (b.t - a.t) : 0; // hours per ms
+      let prev = performance.now();
+      const coast = (now) => {
+        const dt = now - prev;
+        prev = now;
+        v *= 0.94 ** (dt / 16);
+        setOffset(state.offset + v * dt);
+        if (Math.abs(v) > 0.0004 && state.offset > 0 && state.offset < MAX_OFFSET) glide = requestAnimationFrame(coast);
+        else { snap(); scheduleReturn(); }
+      };
+      glide = requestAnimationFrame(coast);
+      updateHint();
+      return;
+    }
+    if (e.type === 'pointercancel') return;
+    scheduleReturn();
+    const t = gesture.target;
+    if (!t) return;
+    if (t.dataset.place !== undefined) sendThought(Number(t.dataset.place));
+    else if (t.dataset.plot !== undefined) inviteCard();
+    else if (t.dataset.star) travelToSlot(t.dataset.star);
+    else if (t.dataset.lantern) {
+      const p = world().people.find((x) => x.id === t.dataset.lantern);
+      if (p) label(Number(t.dataset.x), Number(t.dataset.y) - 30, p.name);
+    }
+  };
+  svg.addEventListener('pointerup', end);
+  svg.addEventListener('pointercancel', end);
+}
+
+// ---------- The only words: a hint, until you've done it once ----------
+
+function updateHint() {
+  const hint = $('.hint', app);
+  if (!hint) return;
+  const { people } = world();
+  let text = '';
+  if (!state.data) text = '';
+  else if (!people.length) text = 'Touche le petit panneau pour inviter quelqu’un';
+  else if (!load('pinged')) text = `Touche ${PLACES[0].the} de ${people[0].name} pour lui envoyer une pensée`;
+  else if (!load('travelled')) text = 'Fais glisser le ciel pour avancer dans le temps';
+  else if (!load('candled')) text = state.offset > 0.3 ? 'Appui long sur ton ponton : une bougie, tu es libre' : '';
+  hint.textContent = text;
+  hint.classList.toggle('on', Boolean(text));
+  const top = $('.top', app);
+  top.innerHTML = state.data && pushSupported && Notification.permission === 'default'
+    ? '<button class="pill small" data-act="enable-push">Activer les notifications</button>' : '';
+}
+
+// ---------- Cards (the few moments that need words) ----------
+
+function openCard(html, { closable = true } = {}) {
+  const root = $('.card-root', app);
+  root.innerHTML = `<div class="card-wrap ${closable ? 'closable' : ''}"><div class="card">${html}</div></div>`;
+  const wrap = $('.card-wrap', root);
+  if (closable) wrap.addEventListener('click', (e) => { if (e.target === wrap) closeCard(); });
+  return $('.card', root);
+}
+function closeCard() {
+  const wrap = $('.card-wrap', app);
+  if (!wrap) return;
+  wrap.classList.add('out');
+  setTimeout(() => wrap.remove(), 250);
 }
 
 const SHARE_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1"/></svg>';
 const ADD_ICON = '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg>';
 
-function being(cls, color, name, opts = {}) {
-  return `<div class="being ${cls}" ${opts.attrs || ''}><div class="hop">${avatarSVG(color, opts)}</div>${name ? `<div class="name">${esc(name)}</div>` : ''}</div>`;
-}
-
-// ---------- Views ----------
-
-function render() {
-  if (state.token && state.data) {
-    if (state.view === 'notif') app.innerHTML = notifView();
-    else renderHome();
-  } else if (state.token) {
-    app.innerHTML = '<div class="solo"></div>';
-  } else if (isIOS && !isStandalone) {
-    app.innerHTML = installView();
-  } else {
-    app.innerHTML = onboardView();
-  }
-  placeDuo();
-}
-
-// Two beings side by side on the welcome screens.
-function placeDuo() {
-  const duo = $('.duo', app);
-  if (!duo) return;
-  const [a, b] = duo.querySelectorAll('.being');
-  const size = 118;
-  const mid = duo.clientWidth / 2;
-  a.style.transform = `translateX(${b ? mid - size - 14 : mid - size / 2}px)`;
-  if (b) b.style.transform = `translateX(${mid + 14}px)`;
-}
-
-function installView() {
+function showWelcome() {
+  buildWorld();
   const who = state.inviter;
-  return `
-  <div class="solo">
-    <div class="duo">${being('me', 'rose', '', { ghost: true })}${who ? being('them', who.color, '') : being('them', 'ciel', '')}</div>
-    <h1>${who ? `${esc(who.name)} pense à toi` : 'Pense à toi'}</h1>
-    <p class="lead">Installe l'app sur ton iPhone. Ça prend vingt secondes.</p>
-    <div class="steps">
-      <div class="step"><b>1</b><div>Touche ${SHARE_ICON} <strong>Partager</strong><br><span class="tiny">parfois caché sous ⋯ en bas</span></div></div>
-      <div class="step"><b>2</b><div>Choisis ${ADD_ICON} <strong>Sur l'écran d'accueil</strong></div></div>
-      <div class="step"><b>3</b><div>Ouvre <strong>Pense à toi</strong> depuis ton écran d'accueil</div></div>
-    </div>
-    <p class="tiny">Dans WhatsApp ou Messenger ? Ouvre d'abord ce lien dans Safari.</p>
-    ${invite ? `<p class="tiny" style="margin:18px 0 2px">Tu as déjà l'app ? Entre ce code :</p><div class="code">${esc(invite)}</div>` : ''}
-  </div>`;
-}
-
-function onboardView() {
-  const who = state.inviter;
-  const pick = COLORS[load('color')] ? load('color') : 'rose';
-  return `
-  <form class="solo" data-form="signup">
-    <div class="duo">${being('me', pick, '')}${who ? being('them', who.color, '') : ''}</div>
-    <h1>${who ? `${esc(who.name)} t'attend` : 'Coucou toi'}</h1>
-    <p class="lead">Choisis ta couleur et ton prénom.</p>
-    <div class="swatches" role="radiogroup" aria-label="Ta couleur">
-      ${Object.entries(COLORS).map(([k, c]) => `<button type="button" class="swatch ${k === pick ? 'on' : ''}" style="background:${c.body}" data-color="${k}" role="radio" aria-checked="${k === pick}" aria-label="${k}"></button>`).join('')}
-    </div>
-    <input class="field" name="name" autocomplete="given-name" maxlength="24" placeholder="ton prénom" required>
-    <div class="stack" style="margin-top:22px"><button class="pill wide" type="submit">C'est moi</button></div>
-  </form>`;
-}
-
-function notifView() {
-  const { me, people } = state.data;
-  const p = people[0];
-  return `
-  <div class="solo">
-    <div class="duo">${being('me', me.color, '')}${p ? being('them', p.color, '') : being('them', 'ciel', '', { ghost: true })}</div>
-    <h1>Sentir ses pensées</h1>
-    <p class="lead">Active les notifications pour savoir quand quelqu'un pense à toi.</p>
-    <div class="stack">
-      <button class="pill wide" data-act="enable-push">Activer</button>
-      <button class="link" data-act="skip-push">plus tard</button>
-    </div>
-  </div>`;
-}
-
-function renderHome() {
-  const { me, people } = state.data;
-  const notifChip = pushSupported && Notification.permission === 'default'
-    ? '<button class="pill soft small notif-chip" data-act="enable-push">Activer les notifications</button>' : '';
-  app.innerHTML = `
-    <div class="top-bar">${notifChip}</div>
-    <div class="pages">
-      ${people.map((p) => personPage(me, p)).join('')}
-      ${addPage(me)}
-    </div>
-    <div class="dock"><div class="dots"></div><div class="dock-action"></div></div>`;
-  const pages = $('.pages', app);
-  state.page = Math.min(state.page, people.length);
-  requestAnimationFrame(() => {
-    pages.scrollLeft = state.page * pages.clientWidth;
-    app.querySelectorAll('.page').forEach(place);
-    renderDock();
-    receiveIfNeeded();
-  });
-  let t;
-  pages.addEventListener('scroll', () => {
-    clearTimeout(t);
-    t = setTimeout(() => {
-      const i = Math.round(pages.scrollLeft / pages.clientWidth);
-      if (i !== state.page) {
-        state.page = i;
-        renderDock();
-        receiveIfNeeded();
-      }
-    }, 80);
-  });
-}
-
-function personPage(me, p) {
-  const m = momentWith(p.id);
-  const hint = load('pinged') ? '' : `Touche ${esc(p.name)} pour lui envoyer une pensée`;
-  return `
-  <section class="page" data-person="${p.id}">
-    <div class="stage" data-act="ping" data-id="${p.id}">
-      <div class="ground">${GROUND}</div>
-      ${m ? `<button class="moment-tag" data-act="moment" data-id="${m.id}">${m.kind === 'call' ? "On s'appelle" : 'On se voit'} <b>${esc(slotWords(m.slot))}</b></button>` : ''}
-      ${being('me', me.color, 'toi')}
-      ${being('them', p.color, p.name)}
-    </div>
-    <div class="hint">${hint}</div>
-  </section>`;
-}
-
-function addPage(me) {
-  return `
-  <section class="page" data-add>
-    <div class="stage" data-act="invite">
-      <div class="ground">${GROUND}</div>
-      ${being('me', me.color, 'toi')}
-      ${being('them', 'ciel', '', { ghost: true })}
-    </div>
-    <div class="hint">${state.data.people.length ? 'Quelqu’un d’autre ?' : 'Invite quelqu’un que tu aimes'}</div>
-  </section>`;
-}
-
-// Position the two beings according to how much they have been thinking of each other.
-function place(page) {
-  const stage = $('.stage', page);
-  const [meEl, themEl] = stage.querySelectorAll('.being');
-  const W = stage.clientWidth;
-  const size = Math.min(128, W * 0.33);
-  const pid = page.dataset.person;
-  const p = pid && state.data.people.find((x) => x.id === pid);
-  const c = p ? closeness(p) : 0.15;
-  const maxGap = Math.max(24, W - 2 * size - 36);
-  const gap = maxGap + (-size * 0.14 - maxGap) * c;
-  const lean = c > 0.75 ? 7 : c > 0.45 ? 3 : 0;
-  for (const el of [meEl, themEl]) el.style.setProperty('--size', `${size}px`);
-  meEl.style.transform = `translateX(${W / 2 - gap / 2 - size}px) rotate(${lean}deg)`;
-  themEl.style.transform = `translateX(${W / 2 + gap / 2}px) rotate(${-lean}deg)`;
-  meEl.style.transformOrigin = themEl.style.transformOrigin = '50% 100%';
-  // Names stay level while the beings lean in.
-  for (const [el, r] of [[meEl, -lean], [themEl, lean]]) {
-    const name = $('.name', el);
-    if (name) name.style.transform = `rotate(${r}deg)`;
-  }
-  if (p) {
-    const mood = c > 0.75 ? 'happy' : 'calm';
-    if (meEl.dataset.mood !== mood) {
-      meEl.dataset.mood = themEl.dataset.mood = mood;
-      $('.hop', meEl).innerHTML = avatarSVG(state.data.me.color, { mood });
-      $('.hop', themEl).innerHTML = avatarSVG(p.color, { mood });
-    }
-  }
-}
-
-function renderDock() {
-  const { people } = state.data;
-  const dots = $('.dots', app);
-  const action = $('.dock-action', app);
-  if (!dots) return;
-  const total = people.length + 1;
-  dots.innerHTML = total > 1 ? Array.from({ length: total }, (_, i) => `<i class="${i === state.page ? 'on' : ''}"></i>`).join('') : '';
-  const p = people[state.page];
-  if (!p) {
-    action.innerHTML = '<button class="pill" data-act="invite">Inviter</button>';
+  if (isIOS && !isStandalone) {
+    openCard(`
+      <h1>${who ? `${esc(who.name)} pense à toi` : 'Pense à toi'}</h1>
+      <p class="lead">Installe l'app sur ton iPhone, ça prend vingt secondes.</p>
+      <ol class="steps">
+        <li>Touche ${SHARE_ICON} <b>Partager</b> <span class="tiny">(parfois sous ⋯)</span></li>
+        <li>Choisis ${ADD_ICON} <b>Sur l'écran d'accueil</b></li>
+        <li>Ouvre <b>Pense à toi</b> depuis ton écran d'accueil</li>
+      </ol>
+      <p class="tiny">Dans WhatsApp ou Messenger ? Ouvre d'abord ce lien dans Safari.</p>
+      ${invite ? `<p class="tiny">Déjà installée ? Entre ce code : <b class="code">${esc(invite)}</b></p>` : ''}`, { closable: false });
     return;
   }
-  const shared = sharedSlots(p).filter((s) => !state.data.moments.some((m) => m.slot === s && m.with?.id === p.id));
-  let label = 'Notre ciel';
-  let cls = '';
-  if (shared.length && !momentWith(p.id)) { label = 'Vos ciels se croisent'; cls = 'lilac pulse'; }
-  else if (p.sky.theirs.some((s) => !isPast(s)) && !p.sky.mine.some((s) => !isPast(s))) { label = 'À toi de peindre'; cls = 'lilac'; }
-  action.innerHTML = `<button class="pill ${cls}" data-act="sky" data-id="${p.id}">${label}</button>`;
+  const card = openCard(`
+    <form data-signup>
+      <h1>${who ? `${esc(who.name)} t'attend de l'autre côté du lac` : 'Bienvenue au bord du lac'}</h1>
+      <p class="lead">Comment tu t'appelles ?</p>
+      <input class="field" name="name" autocomplete="given-name" maxlength="24" placeholder="ton prénom" required>
+      <button class="pill wide" type="submit">C'est moi</button>
+    </form>`, { closable: false });
+  $('form', card).addEventListener('submit', signup);
 }
 
-// ---------- Animations ----------
-
-function headPoint(beingEl) {
-  const r = $('.being-svg', beingEl).getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height * 0.28 };
-}
-
-function bounce(el, kind) {
-  const frames = kind === 'jump'
-    ? [{ transform: 'scale(1.06,.9)' }, { transform: 'translateY(-26px) scale(.95,1.06)', offset: 0.35 }, { transform: 'translateY(0) scale(1.07,.92)', offset: 0.7 }, { transform: 'none' }]
-    : [{ transform: 'none' }, { transform: 'rotate(-5deg) scale(1.04,.96)', offset: 0.25 }, { transform: 'rotate(4deg)', offset: 0.55 }, { transform: 'rotate(-2deg)', offset: 0.8 }, { transform: 'none' }];
-  return el.animate(frames, { duration: kind === 'jump' ? 600 : 700, easing: 'ease-out' }).finished.catch(() => {});
-}
-
-function rings(stage, beingEl) {
-  const s = stage.getBoundingClientRect();
-  const b = $('.being-svg', beingEl).getBoundingClientRect();
-  for (let i = 0; i < 3; i++) {
-    const r = document.createElement('div');
-    r.className = 'ring';
-    r.style.left = `${b.left - s.left + b.width / 2}px`;
-    r.style.top = `${b.bottom - s.top - 6}px`;
-    r.style.animationDelay = `${i * 180}ms`;
-    stage.prepend(r);
-    setTimeout(() => r.remove(), 2000);
+async function signup(e) {
+  e.preventDefault();
+  const form = e.target;
+  const submit = $('[type=submit]', form);
+  submit.disabled = true;
+  try {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: { name: form.name.value, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, invite },
+    });
+    state.token = res.token;
+    save('token', res.token);
+    delete res.token;
+    setData(res);
+    state.known = new Set(res.people.flatMap((p) => p.pingsFromThem));
+    invite = null;
+    cleanUrl();
+    closeCard();
+    drawStatic();
+    if (pushSupported && Notification.permission === 'default') {
+      setTimeout(() => {
+        const card = openCard(`
+          <h1>Voir les lanternes arriver</h1>
+          <p class="lead">Active les notifications pour savoir quand quelqu'un pense à toi, même quand l'app dort.</p>
+          <button class="pill wide" data-act="enable-push">Activer</button>
+          <button class="link" data-act="close">plus tard</button>`, { closable: false });
+        card.addEventListener('click', onAct);
+      }, 700);
+    } else if (pushSupported && Notification.permission === 'granted') {
+      syncPush().catch(() => {});
+    }
+  } catch (err) {
+    submit.disabled = false;
+    $('.lead', form).textContent = err.message;
   }
 }
 
-function flyHeart(from, to, color) {
-  const a = headPoint(from);
-  const b = headPoint(to);
-  const h = document.createElement('div');
-  h.className = 'flying-heart';
-  h.innerHTML = heartSVG(color);
-  document.body.appendChild(h);
-  const at = (p, extra = '') => ({ transform: `translate(${p.x - 17}px, ${p.y - 17}px) ${extra}` });
-  const mid = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - 70 };
-  return h.animate([at(a, 'scale(.3)'), at(mid, 'scale(1.15) rotate(-8deg)'), at(b, 'scale(.6)')], {
-    duration: 900, easing: 'cubic-bezier(.4,.1,.4,1)', fill: 'forwards',
-  }).finished.catch(() => {}).then(() => h.remove());
+function inviteCard() {
+  const { me } = state.data;
+  const card = openCard(`
+    <h1>Quelqu'un sur l'autre rive ?</h1>
+    <p class="lead">Envoie ce lien à quelqu'un que tu aimes. Sa maison apparaîtra ici.</p>
+    <button class="pill wide" data-act="share">Partager le lien</button>
+    <p class="tiny">ou donne ton code <b class="code">${esc(me.code)}</b></p>
+    <form data-code class="inline">
+      <input class="field" name="code" maxlength="6" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="un code reçu ?">
+      <button class="pill soft" type="submit">OK</button>
+    </form>`);
+  card.addEventListener('click', onAct);
+  $('form', card).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const value = e.target.code.value.trim().toUpperCase();
+    if (!value) return;
+    try {
+      await acceptCode(value);
+      closeCard();
+    } catch (err) {
+      $('.lead', card).textContent = err.message;
+    }
+  });
 }
 
-async function ping(pid) {
-  const page = $(`.page[data-person="${pid}"]`, app);
-  const p = state.data.people.find((x) => x.id === pid);
-  if (!page || !p) return;
-  const stage = $('.stage', page);
-  const [meEl, themEl] = stage.querySelectorAll('.being');
-  save('pinged', '1');
-  $('.hint', page).textContent = '';
-  api('/api/pings', { method: 'POST', body: { to: pid } }).catch((err) => toast(err.message));
-  bounce($('.hop', meEl), 'jump');
-  await flyHeart(meEl, themEl, state.data.me.color);
-  bounce($('.hop', themEl), 'wiggle');
-  rings(stage, themEl);
-  p.pingsFromMe.push(Date.now());
-  place(page);
-}
-
-// Hearts that arrived while the app was closed fly in when you look at that person.
-async function receiveIfNeeded() {
-  const p = state.data.people[state.page];
-  if (!p || !state.toReceive.has(p.id)) return;
-  const n = Math.min(3, state.toReceive.get(p.id));
-  state.toReceive.delete(p.id);
-  const page = $(`.page[data-person="${p.id}"]`, app);
-  const stage = $('.stage', page);
-  const [meEl, themEl] = stage.querySelectorAll('.being');
-  await new Promise((r) => setTimeout(r, 500));
-  for (let i = 0; i < n; i++) {
-    bounce($('.hop', themEl), 'jump');
-    await flyHeart(themEl, meEl, p.color);
-    bounce($('.hop', meEl), 'wiggle');
-    rings(stage, meEl);
+async function onAct(e) {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  switch (btn.dataset.act) {
+    case 'enable-push': await enablePush(); closeCard(); break;
+    case 'close': closeCard(); break;
+    case 'share': shareInvite(); break;
+    default:
   }
-}
-
-// ---------- Sheets ----------
-
-function openSheet(draw) {
-  const overlay = document.createElement('div');
-  overlay.className = 'overlay';
-  overlay.innerHTML = '<div class="sheet" role="dialog" aria-modal="true"><div class="grabber"></div><div class="body"></div></div>';
-  const body = $('.body', overlay);
-  const close = () => {
-    overlay.classList.add('out');
-    setTimeout(() => overlay.remove(), 200);
-  };
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  $('#sheet-root').appendChild(overlay);
-  draw(body, close);
-  return close;
-}
-const sheetOpen = () => Boolean($('.overlay:not(.out)'));
-
-function skySheet(p) {
-  const { me } = state.data;
-  openSheet((body, close) => {
-    body.innerHTML = `
-      <h2 class="sheet-title caps">Notre ciel</h2>
-      <p class="lead">Peins tes moments libres. Là où vos couleurs se mêlent, on se retrouve.</p>
-      <div class="legend"><span><i style="background:${colorOf(me.color).shade}"></i>toi</span><span><i style="background:${colorOf(p.color).shade}"></i>${esc(p.name)}</span></div>
-      <div class="sky"></div>
-      <div class="sky-foot"></div>`;
-    const foot = $('.sky-foot', body);
-
-    const showShared = () => {
-      const planned = state.data.moments.filter((m) => m.with?.id === p.id).map((m) => m.slot);
-      const shared = sky.shared().filter((s) => !planned.includes(s));
-      if (!shared.length) {
-        foot.innerHTML = `<p class="tiny">${p.sky.theirs.some((s) => !isPast(s)) ? 'Pas encore de couleur commune.' : `${esc(p.name)} n'a pas encore peint.`}</p>`;
-        return;
-      }
-      foot.innerHTML = `<div class="caps tiny">Vos ciels se croisent</div>
-        <div class="chips">${shared.slice(0, 4).map((s) => `<button class="pill soft small" data-slot="${s}">${esc(slotWords(s))}</button>`).join('')}</div>`;
-    };
-
-    const choose = (slot) => {
-      foot.innerHTML = `
-        <div class="big-words">${esc(slotWords(slot))}</div>
-        <div class="row">
-          <button class="pill" data-kind="call">On s'appelle</button>
-          <button class="pill" data-kind="meet">On se voit</button>
-        </div>
-        <button class="link" data-back>retour</button>`;
-      foot.dataset.chosen = slot;
-    };
-
-    let saving = Promise.resolve();
-    const sky = mountSky($('.sky', body), {
-      mine: p.sky.mine,
-      theirs: p.sky.theirs,
-      meColor: me.color,
-      themColor: p.color,
-      onChange: (cells) => {
-        p.sky.mine = cells;
-        showShared();
-        saving = api(`/api/sky/${p.id}`, { method: 'PUT', body: { cells } })
-          .then((data) => { setData(data); })
-          .catch((err) => toast(err.message));
-      },
-    });
-    showShared();
-
-    foot.addEventListener('click', async (e) => {
-      const slotBtn = e.target.closest('[data-slot]');
-      if (slotBtn) return choose(slotBtn.dataset.slot);
-      if (e.target.closest('[data-back]')) return showShared();
-      const kindBtn = e.target.closest('[data-kind]');
-      if (!kindBtn) return undefined;
-      kindBtn.disabled = true;
-      try {
-        await saving;
-        const slot = foot.dataset.chosen;
-        await api('/api/moments', { method: 'POST', body: { with: p.id, slot, kind: kindBtn.dataset.kind, at: slotDate(slot).toISOString() } });
-        close();
-        toast("C'est calé 💗");
-        await refresh(true);
-      } catch (err) {
-        kindBtn.disabled = false;
-        toast(err.message);
-      }
-      return undefined;
-    });
-  });
-}
-
-function momentSheet(m) {
-  openSheet((body, close) => {
-    body.innerHTML = `
-      <div class="center" style="padding:8px 0 4px">
-        <div class="caps tiny">${m.kind === 'call' ? "On s'appelle" : 'On se voit'} · ${esc(m.with?.name)}</div>
-        <div class="big-words" style="margin:8px 0 24px">${esc(slotWords(m.slot))}</div>
-        <div class="stack">
-          <a class="pill soft wide" href="/api/moments/${m.id}.ics?for=${state.data.me.id}" style="text-decoration:none">Dans mon calendrier</a>
-          <button class="link" data-cancel>je ne peux plus</button>
-        </div>
-      </div>`;
-    $('[data-cancel]', body).addEventListener('click', async () => {
-      if (!confirm(`Prévenir ${m.with?.name} que tu ne peux plus ?`)) return;
-      try {
-        await api(`/api/moments/${m.id}/cancel`, { method: 'POST' });
-        close();
-        await refresh(true);
-      } catch (err) {
-        toast(err.message);
-      }
-    });
-  });
-}
-
-function inviteSheet() {
-  const { me } = state.data;
-  openSheet((body, close) => {
-    body.innerHTML = `
-      <div class="center">
-        <h2 class="sheet-title caps">Inviter</h2>
-        <p class="lead">Envoie ce lien à quelqu'un que tu aimes.</p>
-        <button class="pill wide" data-share style="max-width:320px">Partager le lien</button>
-        <p class="tiny" style="margin:22px 0 2px">ou donne ton code</p>
-        <div class="code">${esc(me.code)}</div>
-        <form data-code-form class="stack" style="margin-top:26px">
-          <p class="tiny" style="margin:0">On t'a donné un code ?</p>
-          <input class="field" name="code" maxlength="6" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="ABC123" style="letter-spacing:.16em">
-          <button class="pill soft" type="submit">Ajouter</button>
-        </form>
-      </div>`;
-    $('[data-share]', body).addEventListener('click', shareInvite);
-    $('[data-code-form]', body).addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const value = e.target.code.value.trim().toUpperCase();
-      if (!value) return;
-      try {
-        await acceptCode(value);
-        close();
-      } catch (err) {
-        toast(err.message);
-      }
-    });
-  });
 }
 
 // ---------- Actions ----------
@@ -515,21 +722,15 @@ async function shareInvite() {
   const { me } = state.data;
   const url = `${location.origin}/?invite=${me.code}`;
   const text = `${me.name} pense à toi 💗`;
-  if (navigator.share) {
-    await navigator.share({ title: 'Pense à toi', text, url }).catch(() => {});
-  } else {
-    await navigator.clipboard?.writeText(`${text}\n${url}`).catch(() => {});
-    toast('Lien copié');
-  }
+  if (navigator.share) await navigator.share({ title: 'Pense à toi', text, url }).catch(() => {});
+  else await navigator.clipboard?.writeText(`${text}\n${url}`).catch(() => {});
 }
 
-async function acceptCode(code, quiet = false) {
+async function acceptCode(code) {
   const before = state.data?.people.length || 0;
   setData(await api('/api/connect', { method: 'POST', body: { code } }));
-  const added = state.data.people.length > before;
-  if (added) state.page = state.data.people.length - 1;
-  render();
-  if (!quiet || added) toast(added ? 'Vous voilà reliés 💞' : 'Vous étiez déjà reliés 💞');
+  drawStatic();
+  if (state.data.people.length > before) flash(state.data.people.length - 1);
 }
 
 function b64ToU8(b64) {
@@ -562,50 +763,41 @@ async function syncPush(ask = false) {
 
 async function enablePush() {
   try {
-    const result = await syncPush(true);
-    if (result === 'denied') toast('Tu pourras les activer dans Réglages');
+    await syncPush(true);
   } catch (err) {
-    toast("Impossible d'activer les notifications");
     console.error(err);
   }
-  state.view = 'home';
-  render();
+  updateHint();
 }
 
 function setData(data) {
   state.data = data;
-  const key = JSON.stringify(data);
-  const changed = key !== state.dataKey;
-  state.dataKey = key;
-  return changed;
+  if (!state.known) state.known = new Set();
 }
 
-async function refresh(force = false) {
-  const changed = setData(await api('/api/me'));
-  if ((changed || force) && !sheetOpen()) render();
-  return state.data;
+async function refresh() {
+  setData(await api('/api/me'));
+  drawStatic();
+  receiveNew();
 }
 
 // Called whenever the app comes to the foreground.
 async function wakeUp() {
   if (!state.token) return;
   const data = await api('/api/me');
-  const seenAt = data.me.seenAt;
-  for (const p of data.people) {
-    const n = p.pingsFromThem.filter((t) => t > seenAt).length;
-    if (n) state.toReceive.set(p.id, n);
+  if (!state.known) {
+    // First look: everything before your last visit is already in the sky.
+    state.known = new Set(data.people.flatMap((p) => p.pingsFromThem.filter((t) => t <= data.me.seenAt)));
   }
-  // Open on the person who thought of you.
-  const first = data.people.findIndex((p) => state.toReceive.has(p.id));
-  if (first >= 0) state.page = first;
-  if (setData(data) || !$('.pages', app)) render();
-  else receiveIfNeeded();
+  setData(data);
+  if (!$('.world', app)) buildWorld();
+  else drawStatic();
+  receiveNew();
   api('/api/seen', { method: 'POST' }).catch(() => {});
   navigator.clearAppBadge?.()?.catch(() => {});
-  if (openSkyFor) {
-    const p = data.people.find((x) => x.id === openSkyFor);
-    openSkyFor = null;
-    if (p) skySheet(p);
+  if (travelTo) {
+    setTimeout(() => travelToSlot(travelTo), 800);
+    travelTo = null;
   }
 }
 
@@ -615,69 +807,14 @@ function cleanUrl() {
 
 // ---------- Events ----------
 
-app.addEventListener('click', async (e) => {
-  const swatch = e.target.closest('[data-color]');
-  if (swatch) {
-    const color = swatch.dataset.color;
-    app.querySelectorAll('[data-color]').forEach((b) => {
-      b.classList.toggle('on', b === swatch);
-      b.setAttribute('aria-checked', b === swatch);
-    });
-    save('color', color);
-    const hop = $('.duo .being.me .hop', app);
-    hop.innerHTML = avatarSVG(color);
-    bounce(hop, 'jump');
-    return;
-  }
-  const btn = e.target.closest('[data-act]');
-  if (!btn) return;
-  const { act, id } = btn.dataset;
-  const person = (pid) => state.data.people.find((p) => p.id === pid);
-  switch (act) {
-    case 'ping': return ping(id);
-    case 'sky': return skySheet(person(id));
-    case 'moment': e.stopPropagation(); return momentSheet(state.data.moments.find((m) => m.id === id));
-    case 'invite': return inviteSheet();
-    case 'enable-push': return enablePush();
-    case 'skip-push': state.view = 'home'; return render();
-    default: return undefined;
-  }
-});
-
-app.addEventListener('submit', async (e) => {
-  if (e.target.dataset.form !== 'signup') return;
-  e.preventDefault();
-  const submit = $('[type=submit]', e.target);
-  submit.disabled = true;
-  try {
-    const res = await api('/api/users', {
-      method: 'POST',
-      body: {
-        name: e.target.name.value,
-        color: $('.swatch.on', e.target)?.dataset.color,
-        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        invite,
-      },
-    });
-    state.token = res.token;
-    save('token', res.token);
-    delete res.token;
-    setData(res);
-    invite = null;
-    cleanUrl();
-    state.view = pushSupported && Notification.permission !== 'granted' ? 'notif' : 'home';
-    render();
-    if (pushSupported && Notification.permission === 'granted') syncPush().catch(() => {});
-  } catch (err) {
-    submit.disabled = false;
-    toast(err.message);
-  }
+app.addEventListener('click', (e) => {
+  if (e.target.closest('.top [data-act]')) onAct(e);
 });
 
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'push') refresh().catch(() => {});
   if (e.data?.type === 'open') {
-    openSkyFor = new URL(e.data.url, location.origin).searchParams.get('sky');
+    travelTo = new URL(e.data.url, location.origin).searchParams.get('t');
     wakeUp().catch(() => {});
   }
 });
@@ -686,43 +823,42 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') wakeUp().catch(() => {});
 });
 setInterval(() => {
-  if (document.visibilityState === 'visible' && state.token && state.view === 'home') refresh().catch(() => {});
+  if (document.visibilityState !== 'visible') return;
+  applyTime();
+  if (state.token && state.offset === 0) refresh().catch(() => {});
 }, 30000);
-addEventListener('resize', () => {
-  app.querySelectorAll('.page').forEach(place);
-  placeDuo();
-});
 
 // ---------- Boot ----------
 
 async function boot() {
-  installGrain();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-  render();
   if (state.token) {
+    buildWorld();
     try {
       await wakeUp();
     } catch {
       if (state.token) {
-        app.innerHTML = '<div class="solo"><h1>Pas de connexion</h1><p class="lead">On réessaie dans un instant.</p><button class="pill" onclick="location.reload()">Réessayer</button></div>';
+        openCard('<h1>Le lac est loin</h1><p class="lead">Pas de connexion pour le moment.</p><button class="pill wide" onclick="location.reload()">Réessayer</button>', { closable: false });
       }
       return;
     }
     if (invite) {
-      await acceptCode(invite, true).catch(() => {});
+      await acceptCode(invite).catch(() => {});
       invite = null;
     }
     cleanUrl();
     api('/api/me', { method: 'PATCH', body: { tz: Intl.DateTimeFormat().resolvedOptions().timeZone } }).catch(() => {});
     syncPush().catch(() => {});
-  } else if (invite) {
+    return;
+  }
+  if (invite) {
     try {
       state.inviter = (await api(`/api/invites/${invite}`)).from;
     } catch {
       invite = null;
     }
-    render();
   }
+  showWelcome();
 }
 
 boot();

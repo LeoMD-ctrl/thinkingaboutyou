@@ -49,21 +49,19 @@ function day(offset) {
   return d.toISOString().slice(0, 10);
 }
 const slot = (offset, band) => `${day(offset)}:${band}`;
-const startOf = (offset) => new Date(`${day(offset)}T19:00:00`).toISOString();
 
-test('the whole little story: invite, thoughts, painting the sky, a moment', async () => {
-  const leo = (await call('POST', '/api/users', { body: { name: 'Léo', color: 'ciel', tz: 'Europe/Paris' } })).json;
+test('the whole little story: invite, lanterns, candles, a star', async () => {
+  const leo = (await call('POST', '/api/users', { body: { name: 'Léo', tz: 'Europe/Paris' } })).json;
   assert.ok(leo.token);
-  assert.equal(leo.me.color, 'ciel');
   assert.match(leo.me.code, /^[A-Z0-9]{6}$/);
   await call('POST', '/api/push', { token: leo.token, body: { subscription: sub('leo') } });
 
   // Maman opens Léo's invite.
   const invite = await call('GET', `/api/invites/${leo.me.code}`);
-  assert.deepEqual(invite.json.from, { id: leo.me.id, name: 'Léo', color: 'ciel' });
-  const maman = (await call('POST', '/api/users', { body: { name: 'Maman', color: 'rose', invite: leo.me.code } })).json;
+  assert.deepEqual(invite.json.from, { id: leo.me.id, name: 'Léo' });
+  const maman = (await call('POST', '/api/users', { body: { name: 'Maman', tz: 'Europe/Paris', invite: leo.me.code } })).json;
   assert.equal(maman.people[0].name, 'Léo');
-  assert.match(lastPushTo('leo').body, /arrivé/);
+  assert.match(lastPushTo('leo').body, /autre côté du lac/);
   await call('POST', '/api/push', { token: maman.token, body: { subscription: sub('maman') } });
 
   // A thought, then another one.
@@ -76,59 +74,53 @@ test('the whole little story: invite, thoughts, painting the sky, a moment', asy
   assert.match(lastPushTo('leo').body, /encore.*×2/);
   const leoView = (await call('GET', '/api/me', { token: leo.token })).json;
   assert.equal(leoView.people[0].pingsFromThem.length, 2);
-  assert.equal(leoView.people[0].pingsFromMe.length, 0);
   await call('POST', '/api/seen', { token: leo.token });
 
-  // Léo paints his free moments: Maman hears about it once.
-  const painted = await call('PUT', `/api/sky/${maman.me.id}`, { token: leo.token, body: { cells: [slot(2, 'soir'), slot(3, 'midi'), 'nonsense', slot(-5, 'soir')] } });
-  assert.deepEqual(painted.json.people[0].sky.mine, [slot(2, 'soir'), slot(3, 'midi')]);
-  assert.match(lastPushTo('maman').body, /a peint/);
+  // Léo lights candles: Maman hears about it once a day.
+  const lit = await call('PUT', '/api/candles', { token: leo.token, body: { slots: [slot(2, 'soir'), slot(3, 'midi'), 'nonsense', slot(-5, 'soir')] } });
+  assert.deepEqual(lit.json.me.candles, [slot(2, 'soir'), slot(3, 'midi')]);
+  assert.match(lastPushTo('maman').body, /a allumé une bougie/);
   const quiet = sent.length;
-  await call('PUT', `/api/sky/${maman.me.id}`, { token: leo.token, body: { cells: [slot(2, 'soir'), slot(3, 'midi'), slot(4, 'matin')] } });
-  assert.equal(sent.length, quiet, 'no second "painted" notice the same day');
+  await call('PUT', '/api/candles', { token: leo.token, body: { slots: [slot(2, 'soir'), slot(3, 'midi'), slot(4, 'matin')] } });
+  assert.equal(sent.length, quiet, 'no second candle notice the same day');
+  assert.deepEqual((await call('GET', '/api/me', { token: maman.token })).json.people[0].candles, [slot(2, 'soir'), slot(3, 'midi'), slot(4, 'matin')]);
 
-  // A moment can only be planned where both skies meet.
-  const early = await call('POST', '/api/moments', { token: maman.token, body: { with: leo.me.id, slot: slot(2, 'soir'), at: startOf(2), kind: 'meet' } });
-  assert.equal(early.status, 409);
-
-  // Maman paints too: their skies meet, Léo is told.
-  const mamanSky = (await call('PUT', `/api/sky/${leo.me.id}`, { token: maman.token, body: { cells: [slot(2, 'soir'), slot(5, 'aprem')] } })).json;
-  assert.deepEqual(mamanSky.people[0].sky.theirs, [slot(2, 'soir'), slot(3, 'midi'), slot(4, 'matin')]);
-  assert.match(lastPushTo('leo').body, /Vos ciels se croisent .* soir/);
-
-  const m = (await call('POST', '/api/moments', { token: maman.token, body: { with: leo.me.id, slot: slot(2, 'soir'), at: startOf(2), kind: 'meet' } })).json;
+  // Maman lights one at the same moment: a star, Léo is told.
+  const both = (await call('PUT', '/api/candles', { token: maman.token, body: { slots: [slot(2, 'soir'), slot(5, 'aprem')] } })).json;
+  assert.equal(both.moments.length, 1);
+  const m = both.moments[0];
   assert.equal(m.slot, slot(2, 'soir'));
-  assert.match(lastPushTo('leo').body, /C'est calé : .* soir 🫶/);
-  const again = (await call('POST', '/api/moments', { token: leo.token, body: { with: maman.me.id, slot: slot(2, 'soir'), at: startOf(2), kind: 'call' } })).json;
-  assert.equal(again.id, m.id, 'the same moment is not planned twice');
-  assert.equal((await call('GET', '/api/me', { token: leo.token })).json.moments.length, 1);
+  const paris = new Intl.DateTimeFormat('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit' }).format(new Date(m.at));
+  assert.equal(paris, '19:00', 'starts at the beginning of the evening, Paris time');
+  assert.match(lastPushTo('leo').body, /Une étoile pour .* soir/);
+  await call('PUT', '/api/candles', { token: maman.token, body: { slots: [slot(2, 'soir'), slot(5, 'aprem'), slot(4, 'matin')] } });
+  await call('PUT', '/api/candles', { token: maman.token, body: { slots: [slot(2, 'soir'), slot(5, 'aprem'), slot(4, 'matin')] } });
+  assert.equal((await call('GET', '/api/me', { token: leo.token })).json.moments.length, 2, 'one star per shared moment, never twice');
 
   // Calendar entry is named after the other person.
   const ics = await (await fetch(`${base}/api/moments/${m.id}.ics?for=${leo.me.id}`)).text();
-  assert.match(ics, /SUMMARY:🫶 Maman/);
+  assert.match(ics, /SUMMARY:✨ Maman/);
 
   // Reminder fires once, shortly before.
   const before = sent.length;
   await app.sendReminders(new Date(m.at).getTime() - 20 * 60000);
   await app.sendReminders(new Date(m.at).getTime() - 10 * 60000);
   assert.equal(sent.length - before, 2);
-  assert.match(lastPushTo('maman').body, /Tu retrouves Léo bientôt/);
+  assert.match(lastPushTo('maman').body, /Ton moment avec Léo/);
 
-  // Cancelling tells the other one and clears that spot from my sky.
-  await call('POST', `/api/moments/${m.id}/cancel`, { token: leo.token });
+  // Blowing out the candle lets go of the star and tells the other one.
+  await call('PUT', '/api/candles', { token: leo.token, body: { slots: [slot(3, 'midi'), slot(4, 'matin')] } });
   assert.match(lastPushTo('maman').body, /ne peut plus .* soir/);
   const after = (await call('GET', '/api/me', { token: leo.token })).json;
-  assert.equal(after.moments.length, 0);
-  assert.ok(!after.people[0].sky.mine.includes(slot(2, 'soir')));
+  assert.deepEqual(after.moments.map((x) => x.slot), [slot(4, 'matin')]);
 });
 
 test('guards: auth, strangers, bad codes, dead subscriptions', async () => {
   assert.equal((await call('GET', '/api/me')).status, 401);
-  const a = (await call('POST', '/api/users', { body: { name: 'Solo', color: 'not-a-color' } })).json;
-  assert.equal(a.me.color, 'rose');
+  const a = (await call('POST', '/api/users', { body: { name: 'Solo' } })).json;
   const stranger = (await call('POST', '/api/users', { body: { name: 'Inconnu' } })).json;
   assert.equal((await call('POST', '/api/pings', { token: a.token, body: { to: stranger.me.id } })).status, 404);
-  assert.equal((await call('PUT', `/api/sky/${stranger.me.id}`, { token: a.token, body: { cells: [] } })).status, 404);
+  assert.equal((await call('PUT', '/api/candles', { token: a.token, body: { slots: 'nope' } })).status, 400);
   assert.equal((await call('POST', '/api/connect', { token: a.token, body: { code: 'NOPE00' } })).status, 404);
   assert.equal((await call('POST', '/api/connect', { token: a.token, body: { code: a.me.code } })).status, 400);
   assert.equal((await call('POST', '/api/users', { body: { name: '   ' } })).status, 400);

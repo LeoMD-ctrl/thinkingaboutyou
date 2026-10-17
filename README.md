@@ -1,15 +1,19 @@
 # Pense à toi 💗
 
-Deux petits êtres tout doux, toi et l'autre, posés sur un îlot.
+Un petit lac au bord duquel tu vis. Les gens que tu aimes habitent sur l'autre rive. Il n'y a aucun bouton : tout se passe dans le paysage.
 
-- **Une pensée = un toucher.** Touche l'autre personnage : ton petit être sautille, un cœur traverse l'écran, l'autre reçoit une notif « Maman — pense à toi 💗 ». Quand tu ouvres l'app, les cœurs reçus arrivent en volant vers toi.
-- **Ils se rapprochent quand vous vous pensez.** Plus les pensées vont dans les deux sens, plus les deux personnages se rapprochent. Quand vous vous manquez tous les deux, ils se touchent et sourient. Une personne seule ne peut les amener qu'à mi-chemin.
-- **Notre ciel.** Une semaine découpée en matin / midi / aprèm / soir. Chacun peint au doigt ses moments libres, comme à l'aérographe, dans sa couleur. Là où les couleurs se mêlent apparaît un petit cœur : on le touche, on choisit « on s'appelle » ou « on se voit », et c'est calé, sans aller-retour ni créneau horaire. Rappel un peu avant, et un événement « 🫶 Maman » pour le calendrier.
-- **Inviter** : la dernière page (balaye vers la gauche) montre une place vide à côté de toi ; le lien partagé relie automatiquement.
+- **Le paysage suit l'heure réelle** : aube, jour, crépuscule, nuit, avec le soleil puis la lune qui traversent le ciel.
+- **Tes proches sont des lieux** : la maison de Maman, le phare, le moulin, la cabane. Leur fenêtre brille d'autant plus qu'ils ont pensé à toi récemment.
+- **Penser à quelqu'un = toucher sa maison.** Une lanterne part de ton ponton, traverse le lac et va jusque chez lui ou elle, qui reçoit la notif « pense à toi 💗 ».
+- **Les pensées reçues** montent de leur maison sous forme de lanternes et flottent dans ton ciel pendant une journée.
+- **Voyager dans le temps** : fais glisser le ciel, le soleil avance et les jours défilent, avec le moment écrit dans un nuage (« demain soir »). Le paysage revient tout seul au présent.
+- **Une bougie = « je suis libre ».** Appui long sur ton ponton à un moment donné : une bougie s'allume. Les autres voient ta bougie quand ils voyagent jusqu'à ce moment.
+- **Deux bougies au même moment = une étoile** : c'est un moment ensemble, sans avoir à choisir entre s'appeler ou se voir. Les deux personnes sont prévenues, un rappel arrive un peu avant, et l'étoile attend au-dessus de sa maison ; la toucher fait voyager jusqu'au moment. Souffler sa bougie (nouvel appui long) annule.
+- **Inviter** : un petit panneau « + » planté sur l'autre rive. Une seule phrase d'aide s'affiche, et seulement tant que tu n'as pas encore fait le geste.
 
 ## Direction artistique
 
-Inspirée de *Subpar Pool*, en plus minimaliste : aplats pastel, typo ronde et grasse (Fredoka), pilules épaisses, et des ombres en **grain d'aérographe** (un filtre SVG qui transforme un dégradé en nuage de points). Presque aucun texte : pas de compteurs ni de listes, seulement des personnages qui bougent.
+Inspirée de *Subpar Pool*, en plus onirique : aplats pastel, ombres en **grain d'aérographe** (un filtre SVG qui transforme un dégradé en nuage de points), écailles en premier plan, ondes concentriques sur le lac. Un léger **tilt-shift** donne l'effet maquette : le ciel et le premier plan sont flous, l'autre rive nette. Chaque moment de la journée est pré-rendu en image, et l'app fond de l'un à l'autre.
 
 ## La stack, et pourquoi
 
@@ -27,7 +31,7 @@ Tu leur envoies un lien et c'est tout. Si l'idée prend, on pourra écrire une v
 server.js          démarrage, clés VAPID, envoi des push (web-push)
 src/app.js         API + fichiers statiques + rappels
 src/store.js       mini base JSON (data/db.json), écritures atomiques
-public/            l'app : app.js (écrans), avatar.js (personnages + grain), sky.js (notre ciel),
+public/            l'app : app.js (le lac, les gestes, le temps), scene.js (le paysage dessiné),
                    style.css, sw.js (service worker), icônes
 test/              tests de l'API (node --test)
 ```
@@ -68,8 +72,10 @@ Si quelqu'un a déjà l'app installée, il suffit d'entrer le code à 6 lettres 
 ## Bon à savoir
 
 - Pas de mot de passe : chaque téléphone garde une clé secrète. Si l'app est supprimée, on recrée un profil et on se ré-invite.
+- Jusqu'à 4 proches (4 lieux sur l'autre rive).
+- Les moments de la journée : matin (dès 9 h), midi, après-midi, soir (dès 19 h). La nuit, pas de bougie.
 - Deux taps rapprochés ne comptent qu'une fois. Plusieurs pensées dans la journée deviennent « pense encore à toi 💗 ×3 ».
-- Une notif « a peint ses moments libres » part au plus une fois par jour, et « vos ciels se croisent » une seule fois par moment commun.
+- La notif « a allumé une bougie » part au plus une fois par jour.
 
 ## La suite : une vraie app iOS
 
@@ -77,5 +83,5 @@ Cette version web sert de labo pour le design. L'étape d'après est une app Swi
 
 - un bouton « 💗 renvoyer une pensée » directement dans la notif ;
 - le **bouton Action** des iPhone 15 Pro / 16 Pro pour envoyer une pensée sans ouvrir l'app ;
-- un widget écran verrouillé avec les deux personnages ;
-- une **Live Activity** le jour d'un moment calé : les deux personnages qui se rapprochent dans la Dynamic Island.
+- un widget écran verrouillé avec le lac et les fenêtres allumées ;
+- une **Live Activity** le jour d'un moment ensemble : l'étoile et le compte à rebours dans la Dynamic Island.
