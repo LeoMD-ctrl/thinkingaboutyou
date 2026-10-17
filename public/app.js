@@ -1,15 +1,12 @@
-// Pense à toi — a tiny heart pager. No framework, no build step.
+// Pense à toi — two little beings that drift closer when we think of each other.
+// No framework, no build step.
+
+import { COLORS, colorOf, avatarSVG, installGrain } from './avatar.js';
+import { mountSky, slotWords, slotDate, isPast } from './sky.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-
-const EMOJIS = ['🌷', '🐻', '🐱', '🦊', '🐰', '🌸', '☀️', '🍓', '🐼', '🌙'];
-const KIND = {
-  call: { emoji: '📞', label: "S'appeler", noun: 'Appel', wants: "aimerait t'appeler" },
-  meet: { emoji: '🫶', label: 'Se voir', noun: 'On se voit', wants: 'aimerait te voir' },
-};
-const HEARTS = ['💗', '💕', '💖', '🩷', '💞'];
 
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -17,15 +14,16 @@ const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window &&
 
 const params = new URLSearchParams(location.search);
 let invite = (params.get('invite') || '').toUpperCase() || null;
-let focusMoment = params.get('moment');
+let openSkyFor = params.get('sky');
 
 const state = {
   token: load('token'),
   data: null,
+  dataKey: '',
   inviter: null,
   view: 'home',
-  fresh: new Set(),
-  justSent: {},
+  page: 0,
+  toReceive: new Map(), // person id → number of hearts to show arriving
   config: null,
 };
 
@@ -53,79 +51,6 @@ async function api(path, { method = 'GET', body } = {}) {
   return json;
 }
 
-// ---------- Time helpers ----------
-
-const DAY = 86400000;
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-const dayDiff = (d) => Math.round((startOfDay(d) - startOfDay(new Date())) / DAY);
-const hm = (d) => new Date(d).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-
-function dayWord(d) {
-  const date = new Date(d);
-  const n = dayDiff(date);
-  if (n === 0) return date.getHours() >= 18 ? 'Ce soir' : "Aujourd'hui";
-  if (n === 1) return 'Demain';
-  if (n < 7) return cap(date.toLocaleDateString('fr-FR', { weekday: 'long' }));
-  return cap(date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }));
-}
-const slotLabel = (d) => `${dayWord(d)} · ${hm(d)}`;
-const longDate = (d) => `${cap(new Date(d).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }))} à ${hm(d)}`;
-
-function ago(t) {
-  const s = (Date.now() - t) / 1000;
-  if (s < 60) return "à l'instant";
-  if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
-  if (s < DAY / 1000) return `il y a ${Math.floor(s / 3600)} h`;
-  const d = Math.floor(s / (DAY / 1000));
-  return d === 1 ? 'hier' : `il y a ${d} jours`;
-}
-
-function at(dayOffset, h, m = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + dayOffset);
-  d.setHours(h, m, 0, 0);
-  return d;
-}
-// Days until the next given weekday (0 = Sunday), at least `min` days away.
-function until(weekday, min = 0) {
-  let n = (weekday - new Date().getDay() + 7) % 7;
-  if (n < min) n += 7;
-  return n;
-}
-
-// A handful of sensible moments, so proposing is a couple of taps.
-function suggestions(kind) {
-  const list = kind === 'call'
-    ? [at(0, 19), at(1, 12, 30), at(1, 19), at(until(6), 11), at(until(0), 18), at(until(3, 2), 19), at(2, 19)]
-    : [at(until(6, 1), 12, 30), at(until(0, 1), 12, 30), at(until(6, 1), 19, 30), at(until(5, 1), 19, 30), at(until(6, 1) + 7, 12, 30), at(until(0, 1) + 7, 12, 30)];
-  const soon = Date.now() + 30 * 60000;
-  const seen = new Set();
-  return list
-    .filter((d) => d.getTime() > soon)
-    .filter((d) => !seen.has(d.getTime()) && seen.add(d.getTime()))
-    .sort((a, b) => a - b)
-    .slice(0, 6);
-}
-
-// ---------- Little bits of joy ----------
-
-function burst(el, count = 7) {
-  const r = el.getBoundingClientRect();
-  for (let i = 0; i < count; i++) {
-    const h = document.createElement('span');
-    h.className = 'floaty';
-    h.textContent = HEARTS[i % HEARTS.length];
-    h.style.left = `${r.left + r.width / 2 - 11 + (Math.random() * 24 - 12)}px`;
-    h.style.top = `${r.top + r.height / 2 - 14}px`;
-    h.style.setProperty('--dx', `${Math.random() * 120 - 60}px`);
-    h.style.setProperty('--rot', `${Math.random() * 50 - 25}deg`);
-    h.style.animationDelay = `${i * 45}ms`;
-    document.body.appendChild(h);
-    setTimeout(() => h.remove(), 1500);
-  }
-}
-
 let toastTimer;
 function toast(msg) {
   const t = $('#toast');
@@ -135,183 +60,313 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 }
 
-const MASCOT = `
-<svg class="mascot" viewBox="0 0 200 200" aria-hidden="true">
-  <defs>
-    <radialGradient id="mg" cx="35%" cy="28%" r="80%">
-      <stop offset="0" stop-color="#FFC7D5"/><stop offset=".55" stop-color="#FF8FAB"/><stop offset="1" stop-color="#F2678C"/>
-    </radialGradient>
-  </defs>
-  <path d="M100 176C42 134 16 102 16 70c0-27 21-46 46-46 18 0 31 10 38 24 7-14 20-24 38-24 25 0 46 19 46 46 0 32-26 64-84 106z" fill="url(#mg)"/>
-  <ellipse cx="58" cy="58" rx="16" ry="9" fill="#fff" opacity=".45" transform="rotate(-30 58 58)"/>
-  <path d="M66 92q11-11 22 0M112 92q11-11 22 0" stroke="#5A4350" stroke-width="6" fill="none" stroke-linecap="round"/>
-  <ellipse cx="62" cy="110" rx="12" ry="7" fill="#FF5C88" opacity=".35"/>
-  <ellipse cx="138" cy="110" rx="12" ry="7" fill="#FF5C88" opacity=".35"/>
-  <path d="M91 108q9 10 18 0" stroke="#5A4350" stroke-width="5" fill="none" stroke-linecap="round"/>
+// ---------- Closeness ----------
+
+// Recent thoughts count more; each side's warmth is capped so one person alone
+// can only bring them halfway. They touch when both have been thinking.
+function warmth(times) {
+  const now = Date.now();
+  return Math.min(4, times.reduce((s, t) => s + 0.5 ** ((now - t) / (36 * 3600000)), 0));
+}
+function closeness(p) {
+  const a = warmth(p.pingsFromMe);
+  const b = warmth(p.pingsFromThem);
+  let c = (2 * Math.min(a, b) + Math.max(a, b)) / 12;
+  if (momentWith(p.id)) c = Math.max(c, 0.85);
+  return Math.min(1, c);
+}
+const momentWith = (pid) => state.data?.moments.find((m) => m.with?.id === pid);
+const sharedSlots = (p) => p.sky.mine.filter((s) => p.sky.theirs.includes(s) && !isPast(s)).sort();
+
+// ---------- Small drawings ----------
+
+const GROUND = `
+<svg viewBox="0 0 360 80" preserveAspectRatio="none" aria-hidden="true">
+  <defs><radialGradient id="ground-shade" cx="50%" cy="20%" r="75%"><stop offset=".6" stop-color="#CDB4A1" stop-opacity="0"/><stop offset="1" stop-color="#CDB4A1" stop-opacity="1"/></radialGradient></defs>
+  <ellipse cx="180" cy="40" rx="178" ry="36" fill="#EAD9CA"/>
+  <ellipse cx="180" cy="40" rx="178" ry="36" fill="url(#ground-shade)" filter="url(#grain)"/>
 </svg>`;
 
-const HEART_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21C5.5 16.3 2 12.9 2 8.7 2 5.6 4.4 3.3 7.3 3.3c1.9 0 3.6 1 4.7 2.6 1.1-1.6 2.8-2.6 4.7-2.6 2.9 0 5.3 2.3 5.3 5.4 0 4.2-3.5 7.6-10 12.3z"/></svg>';
+function heartSVG(color) {
+  const c = colorOf(color);
+  return `<svg viewBox="0 0 24 22"><defs><radialGradient id="hs-${color}" cx="35%" cy="30%" r="80%"><stop offset=".4" stop-color="${c.shade}" stop-opacity="0"/><stop offset="1" stop-color="${c.shade}"/></radialGradient></defs>
+    <path d="M12 21C5.5 16.3 2 12.9 2 8.7 2 5.6 4.4 3.3 7.3 3.3c1.9 0 3.6 1 4.7 2.6 1.1-1.6 2.8-2.6 4.7-2.6 2.9 0 5.3 2.3 5.3 5.4 0 4.2-3.5 7.6-10 12.3z" fill="${c.body}"/>
+    <path d="M12 21C5.5 16.3 2 12.9 2 8.7 2 5.6 4.4 3.3 7.3 3.3c1.9 0 3.6 1 4.7 2.6 1.1-1.6 2.8-2.6 4.7-2.6 2.9 0 5.3 2.3 5.3 5.4 0 4.2-3.5 7.6-10 12.3z" fill="url(#hs-${color})" filter="url(#grain)"/></svg>`;
+}
+
 const SHARE_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1"/></svg>';
 const ADD_ICON = '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg>';
+
+function being(cls, color, name, opts = {}) {
+  return `<div class="being ${cls}" ${opts.attrs || ''}><div class="hop">${avatarSVG(color, opts)}</div>${name ? `<div class="name">${esc(name)}</div>` : ''}</div>`;
+}
 
 // ---------- Views ----------
 
 function render() {
-  if (state.token && state.data) app.innerHTML = state.view === 'notif' ? notifView() : homeView();
-  else if (state.token) app.innerHTML = `<div class="center">${MASCOT}<p class="lead">Un instant…</p></div>`;
-  else if (isIOS && !isStandalone) app.innerHTML = installView();
-  else app.innerHTML = onboardView();
+  if (state.token && state.data) {
+    if (state.view === 'notif') app.innerHTML = notifView();
+    else renderHome();
+  } else if (state.token) {
+    app.innerHTML = '<div class="solo"></div>';
+  } else if (isIOS && !isStandalone) {
+    app.innerHTML = installView();
+  } else {
+    app.innerHTML = onboardView();
+  }
+  placeDuo();
+}
+
+// Two beings side by side on the welcome screens.
+function placeDuo() {
+  const duo = $('.duo', app);
+  if (!duo) return;
+  const [a, b] = duo.querySelectorAll('.being');
+  const size = 118;
+  const mid = duo.clientWidth / 2;
+  a.style.transform = `translateX(${b ? mid - size - 14 : mid - size / 2}px)`;
+  if (b) b.style.transform = `translateX(${mid + 14}px)`;
 }
 
 function installView() {
   const who = state.inviter;
   return `
-  <div class="center">
-    ${MASCOT}
-    <h1>${who ? `${esc(who.emoji)} ${esc(who.name)} t'invite 💗` : 'Pense à toi'}</h1>
-    <p class="lead">Installe l'app sur ton iPhone pour recevoir les petits cœurs. Ça prend 20&nbsp;secondes :</p>
+  <div class="solo">
+    <div class="duo">${being('me', 'rose', '', { ghost: true })}${who ? being('them', who.color, '') : being('them', 'ciel', '')}</div>
+    <h1>${who ? `${esc(who.name)} pense à toi` : 'Pense à toi'}</h1>
+    <p class="lead">Installe l'app sur ton iPhone. Ça prend vingt secondes.</p>
     <div class="steps">
-      <div class="step"><b>1</b><div>Touche ${SHARE_ICON} <strong>Partager</strong><br><span class="tiny">(parfois caché sous ⋯ en bas)</span></div></div>
+      <div class="step"><b>1</b><div>Touche ${SHARE_ICON} <strong>Partager</strong><br><span class="tiny">parfois caché sous ⋯ en bas</span></div></div>
       <div class="step"><b>2</b><div>Choisis ${ADD_ICON} <strong>Sur l'écran d'accueil</strong></div></div>
-      <div class="step"><b>3</b><div>Ouvre <strong>Pense à toi</strong> depuis ton écran d'accueil 💗</div></div>
+      <div class="step"><b>3</b><div>Ouvre <strong>Pense à toi</strong> depuis ton écran d'accueil</div></div>
     </div>
-    <p class="tiny">Tu es dans WhatsApp ou Messenger ?<br>Ouvre d'abord ce lien dans Safari.</p>
-    ${invite ? `<p class="tiny" style="margin-top:22px">Tu as déjà l'app ? Touche <strong>+</strong> et entre ce code :</p><div class="code">${esc(invite)}</div>` : ''}
+    <p class="tiny">Dans WhatsApp ou Messenger ? Ouvre d'abord ce lien dans Safari.</p>
+    ${invite ? `<p class="tiny" style="margin:18px 0 2px">Tu as déjà l'app ? Entre ce code :</p><div class="code">${esc(invite)}</div>` : ''}
   </div>`;
 }
 
 function onboardView() {
   const who = state.inviter;
-  const pick = load('emoji') || EMOJIS[0];
+  const pick = COLORS[load('color')] ? load('color') : 'rose';
   return `
-  <form class="center" data-form="signup">
-    ${MASCOT}
-    <h1>${who ? `${esc(who.emoji)} ${esc(who.name)} t'invite 💗` : 'Coucou !'}</h1>
-    <p class="lead">Comment tu t'appelles ? C'est ce que verront tes proches.</p>
-    <input class="field" name="name" autocomplete="given-name" maxlength="24" placeholder="Ton prénom ou surnom" required>
-    <div class="emojis" role="radiogroup" aria-label="Ton emoji">
-      ${EMOJIS.map((e) => `<button type="button" class="emoji ${e === pick ? 'on' : ''}" data-emoji="${e}" role="radio" aria-checked="${e === pick}">${e}</button>`).join('')}
+  <form class="solo" data-form="signup">
+    <div class="duo">${being('me', pick, '')}${who ? being('them', who.color, '') : ''}</div>
+    <h1>${who ? `${esc(who.name)} t'attend` : 'Coucou toi'}</h1>
+    <p class="lead">Choisis ta couleur et ton prénom.</p>
+    <div class="swatches" role="radiogroup" aria-label="Ta couleur">
+      ${Object.entries(COLORS).map(([k, c]) => `<button type="button" class="swatch ${k === pick ? 'on' : ''}" style="background:${c.body}" data-color="${k}" role="radio" aria-checked="${k === pick}" aria-label="${k}"></button>`).join('')}
     </div>
-    <button class="pill pink" type="submit">C'est parti 💗</button>
+    <input class="field" name="name" autocomplete="given-name" maxlength="24" placeholder="ton prénom" required>
+    <div class="stack" style="margin-top:22px"><button class="pill wide" type="submit">C'est moi</button></div>
   </form>`;
 }
 
 function notifView() {
-  return `
-  <div class="center">
-    ${MASCOT}
-    <h1>Une dernière chose</h1>
-    <p class="lead">Active les notifications pour recevoir les petits cœurs, même quand l'app est fermée.</p>
-    <div class="stack">
-      <button class="pill pink" data-act="enable-push">Activer les notifications 🔔</button>
-      <button class="pill ghost" data-act="skip-push">Plus tard</button>
-    </div>
-  </div>`;
-}
-
-function pushBanner() {
-  if (!pushSupported) return '';
-  if (Notification.permission === 'denied') {
-    return `<div class="banner"><span class="emo">🔕</span><div>Notifications bloquées.<br><span class="tiny">Réglages › Notifications › Pense à toi</span></div></div>`;
-  }
-  if (Notification.permission === 'default') {
-    return `<div class="banner"><span class="emo">🔔</span><div>Active les notifs pour recevoir les cœurs</div><button class="pill pink" data-act="enable-push">Activer</button></div>`;
-  }
-  return '';
-}
-
-function homeView() {
   const { me, people } = state.data;
+  const p = people[0];
   return `
-  <header class="top">
-    <div><div class="hello">Coucou ${esc(me.name)} ${esc(me.emoji)}</div><h1 class="title">Pense à toi</h1></div>
-    <button class="round-btn" data-act="invite" aria-label="Inviter quelqu'un">+</button>
-  </header>
-  ${pushBanner()}
-  ${people.length ? people.map(personCard).join('') : emptyView()}`;
-}
-
-function emptyView() {
-  return `
-  <div class="center" style="padding-top:2vh">
-    ${MASCOT}
-    <h2>Invite ta personne préférée 💌</h2>
-    <p class="lead">Ta maman, ton amoureux·se, ta meilleure amie… Dès que le lien est ouvert, vous voilà connectés.</p>
+  <div class="solo">
+    <div class="duo">${being('me', me.color, '')}${p ? being('them', p.color, '') : being('them', 'ciel', '', { ghost: true })}</div>
+    <h1>Sentir ses pensées</h1>
+    <p class="lead">Active les notifications pour savoir quand quelqu'un pense à toi.</p>
     <div class="stack">
-      <button class="pill pink" data-act="share">Envoyer une invitation</button>
-      <button class="pill ghost" data-act="invite">J'ai reçu un code</button>
+      <button class="pill wide" data-act="enable-push">Activer</button>
+      <button class="link" data-act="skip-push">plus tard</button>
     </div>
   </div>`;
 }
 
-function statusOf(p) {
-  if (Date.now() - (state.justSent[p.id] || 0) < 4000) return { text: 'Petit cœur envoyé ✓', love: true };
-  const last = p.pingsFromThem.length ? Math.max(...p.pingsFromThem) : null;
-  if (last && Date.now() - last < DAY) {
-    const today = p.pingsFromThem.filter((t) => dayDiff(t) === 0).length;
-    return { text: `a pensé à toi ${ago(last)} 💗${today > 1 ? ` ×${today}` : ''}`, love: true };
-  }
-  if (p.lastFromMe) return { text: `Ton dernier cœur : ${ago(p.lastFromMe)}` };
-  return { text: 'Envoie-lui un petit cœur' };
+function renderHome() {
+  const { me, people } = state.data;
+  const notifChip = pushSupported && Notification.permission === 'default'
+    ? '<button class="pill soft small notif-chip" data-act="enable-push">Activer les notifications</button>' : '';
+  app.innerHTML = `
+    <div class="top-bar">${notifChip}</div>
+    <div class="pages">
+      ${people.map((p) => personPage(me, p)).join('')}
+      ${addPage(me)}
+    </div>
+    <div class="dock"><div class="dots"></div><div class="dock-action"></div></div>`;
+  const pages = $('.pages', app);
+  state.page = Math.min(state.page, people.length);
+  requestAnimationFrame(() => {
+    pages.scrollLeft = state.page * pages.clientWidth;
+    app.querySelectorAll('.page').forEach(place);
+    renderDock();
+    receiveIfNeeded();
+  });
+  let t;
+  pages.addEventListener('scroll', () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      const i = Math.round(pages.scrollLeft / pages.clientWidth);
+      if (i !== state.page) {
+        state.page = i;
+        renderDock();
+        receiveIfNeeded();
+      }
+    }, 80);
+  });
 }
 
-function personCard(p) {
-  const st = statusOf(p);
-  const moments = state.data.moments.filter((m) => m.with?.id === p.id);
+function personPage(me, p) {
+  const m = momentWith(p.id);
+  const hint = load('pinged') ? '' : `Touche ${esc(p.name)} pour lui envoyer une pensée`;
   return `
-  <section class="card" id="p-${p.id}">
-    <div class="person">
-      <div class="avatar ${state.fresh.has(p.id) ? 'fresh' : ''}" data-avatar="${p.id}">${esc(p.emoji)}</div>
-      <div class="who">
-        <h2 class="name">${esc(p.name)}</h2>
-        <div class="status ${st.love ? 'love' : ''}" data-status="${p.id}">${esc(st.text)}</div>
-      </div>
-      <button class="heart-btn" data-act="ping" data-id="${p.id}" aria-label="Dire à ${esc(p.name)} que tu penses à elle ou lui">${HEART_SVG}</button>
+  <section class="page" data-person="${p.id}">
+    <div class="stage" data-act="ping" data-id="${p.id}">
+      <div class="ground">${GROUND}</div>
+      ${m ? `<button class="moment-tag" data-act="moment" data-id="${m.id}">${m.kind === 'call' ? "On s'appelle" : 'On se voit'} <b>${esc(slotWords(m.slot))}</b></button>` : ''}
+      ${being('me', me.color, 'toi')}
+      ${being('them', p.color, p.name)}
     </div>
-    <div class="moment-zone">
-      ${moments.length
-        ? moments.map((m) => momentBubble(m, p)).join('')
-        : `<button class="pill" data-act="propose" data-id="${p.id}">📞 🫶&nbsp; On se trouve un moment ?</button>`}
-    </div>
+    <div class="hint">${hint}</div>
   </section>`;
 }
 
-function momentBubble(m, p) {
-  const k = KIND[m.kind];
-  if (m.status === 'confirmed') {
-    return `
-    <button class="bubble done" data-act="moment" data-id="${m.id}" style="width:100%;text-align:left" id="m-${m.id}">
-      <div class="row"><div>
-        <div class="bubble-title">${k.emoji} ${k.noun} · ${esc(slotLabel(m.at))}</div>
-        <div class="bubble-sub">C'est calé ✓</div>
-      </div><span class="x">›</span></div>
-    </button>`;
-  }
-  if (m.mine) {
-    const n = m.slots.length;
-    return `
-    <div class="bubble wait" id="m-${m.id}">
-      <div class="row"><div>
-        <div class="bubble-title">${k.emoji} Proposition envoyée</div>
-        <div class="bubble-sub">${n} moment${n > 1 ? 's' : ''} · en attente de ${esc(p.name)}</div>
-      </div><button class="x" data-act="cancel" data-id="${m.id}">Annuler</button></div>
-    </div>`;
-  }
-  const future = m.slots.filter((s) => new Date(s) > Date.now());
+function addPage(me) {
   return `
-  <div class="bubble" id="m-${m.id}">
-    <div class="bubble-title">${k.emoji} ${esc(p.name)} ${k.wants} !<br><span class="bubble-sub">Touche le moment qui te va :</span></div>
-    <div class="slots">
-      ${future.map((s) => `<button class="slot" data-act="accept" data-id="${m.id}" data-slot="${s}">${esc(slotLabel(s))}<span>♡</span></button>`).join('')}
+  <section class="page" data-add>
+    <div class="stage" data-act="invite">
+      <div class="ground">${GROUND}</div>
+      ${being('me', me.color, 'toi')}
+      ${being('them', 'ciel', '', { ghost: true })}
     </div>
-    <button class="pill ghost" data-act="counter" data-id="${m.id}" data-person="${p.id}">Aucun ne me va</button>
-  </div>`;
+    <div class="hint">${state.data.people.length ? 'Quelqu’un d’autre ?' : 'Invite quelqu’un que tu aimes'}</div>
+  </section>`;
+}
+
+// Position the two beings according to how much they have been thinking of each other.
+function place(page) {
+  const stage = $('.stage', page);
+  const [meEl, themEl] = stage.querySelectorAll('.being');
+  const W = stage.clientWidth;
+  const size = Math.min(128, W * 0.33);
+  const pid = page.dataset.person;
+  const p = pid && state.data.people.find((x) => x.id === pid);
+  const c = p ? closeness(p) : 0.15;
+  const maxGap = Math.max(24, W - 2 * size - 36);
+  const gap = maxGap + (-size * 0.14 - maxGap) * c;
+  const lean = c > 0.75 ? 7 : c > 0.45 ? 3 : 0;
+  for (const el of [meEl, themEl]) el.style.setProperty('--size', `${size}px`);
+  meEl.style.transform = `translateX(${W / 2 - gap / 2 - size}px) rotate(${lean}deg)`;
+  themEl.style.transform = `translateX(${W / 2 + gap / 2}px) rotate(${-lean}deg)`;
+  meEl.style.transformOrigin = themEl.style.transformOrigin = '50% 100%';
+  // Names stay level while the beings lean in.
+  for (const [el, r] of [[meEl, -lean], [themEl, lean]]) {
+    const name = $('.name', el);
+    if (name) name.style.transform = `rotate(${r}deg)`;
+  }
+  if (p) {
+    const mood = c > 0.75 ? 'happy' : 'calm';
+    if (meEl.dataset.mood !== mood) {
+      meEl.dataset.mood = themEl.dataset.mood = mood;
+      $('.hop', meEl).innerHTML = avatarSVG(state.data.me.color, { mood });
+      $('.hop', themEl).innerHTML = avatarSVG(p.color, { mood });
+    }
+  }
+}
+
+function renderDock() {
+  const { people } = state.data;
+  const dots = $('.dots', app);
+  const action = $('.dock-action', app);
+  if (!dots) return;
+  const total = people.length + 1;
+  dots.innerHTML = total > 1 ? Array.from({ length: total }, (_, i) => `<i class="${i === state.page ? 'on' : ''}"></i>`).join('') : '';
+  const p = people[state.page];
+  if (!p) {
+    action.innerHTML = '<button class="pill" data-act="invite">Inviter</button>';
+    return;
+  }
+  const shared = sharedSlots(p).filter((s) => !state.data.moments.some((m) => m.slot === s && m.with?.id === p.id));
+  let label = 'Notre ciel';
+  let cls = '';
+  if (shared.length && !momentWith(p.id)) { label = 'Vos ciels se croisent'; cls = 'lilac pulse'; }
+  else if (p.sky.theirs.some((s) => !isPast(s)) && !p.sky.mine.some((s) => !isPast(s))) { label = 'À toi de peindre'; cls = 'lilac'; }
+  action.innerHTML = `<button class="pill ${cls}" data-act="sky" data-id="${p.id}">${label}</button>`;
+}
+
+// ---------- Animations ----------
+
+function headPoint(beingEl) {
+  const r = $('.being-svg', beingEl).getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height * 0.28 };
+}
+
+function bounce(el, kind) {
+  const frames = kind === 'jump'
+    ? [{ transform: 'scale(1.06,.9)' }, { transform: 'translateY(-26px) scale(.95,1.06)', offset: 0.35 }, { transform: 'translateY(0) scale(1.07,.92)', offset: 0.7 }, { transform: 'none' }]
+    : [{ transform: 'none' }, { transform: 'rotate(-5deg) scale(1.04,.96)', offset: 0.25 }, { transform: 'rotate(4deg)', offset: 0.55 }, { transform: 'rotate(-2deg)', offset: 0.8 }, { transform: 'none' }];
+  return el.animate(frames, { duration: kind === 'jump' ? 600 : 700, easing: 'ease-out' }).finished.catch(() => {});
+}
+
+function rings(stage, beingEl) {
+  const s = stage.getBoundingClientRect();
+  const b = $('.being-svg', beingEl).getBoundingClientRect();
+  for (let i = 0; i < 3; i++) {
+    const r = document.createElement('div');
+    r.className = 'ring';
+    r.style.left = `${b.left - s.left + b.width / 2}px`;
+    r.style.top = `${b.bottom - s.top - 6}px`;
+    r.style.animationDelay = `${i * 180}ms`;
+    stage.prepend(r);
+    setTimeout(() => r.remove(), 2000);
+  }
+}
+
+function flyHeart(from, to, color) {
+  const a = headPoint(from);
+  const b = headPoint(to);
+  const h = document.createElement('div');
+  h.className = 'flying-heart';
+  h.innerHTML = heartSVG(color);
+  document.body.appendChild(h);
+  const at = (p, extra = '') => ({ transform: `translate(${p.x - 17}px, ${p.y - 17}px) ${extra}` });
+  const mid = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) - 70 };
+  return h.animate([at(a, 'scale(.3)'), at(mid, 'scale(1.15) rotate(-8deg)'), at(b, 'scale(.6)')], {
+    duration: 900, easing: 'cubic-bezier(.4,.1,.4,1)', fill: 'forwards',
+  }).finished.catch(() => {}).then(() => h.remove());
+}
+
+async function ping(pid) {
+  const page = $(`.page[data-person="${pid}"]`, app);
+  const p = state.data.people.find((x) => x.id === pid);
+  if (!page || !p) return;
+  const stage = $('.stage', page);
+  const [meEl, themEl] = stage.querySelectorAll('.being');
+  save('pinged', '1');
+  $('.hint', page).textContent = '';
+  api('/api/pings', { method: 'POST', body: { to: pid } }).catch((err) => toast(err.message));
+  bounce($('.hop', meEl), 'jump');
+  await flyHeart(meEl, themEl, state.data.me.color);
+  bounce($('.hop', themEl), 'wiggle');
+  rings(stage, themEl);
+  p.pingsFromMe.push(Date.now());
+  place(page);
+}
+
+// Hearts that arrived while the app was closed fly in when you look at that person.
+async function receiveIfNeeded() {
+  const p = state.data.people[state.page];
+  if (!p || !state.toReceive.has(p.id)) return;
+  const n = Math.min(3, state.toReceive.get(p.id));
+  state.toReceive.delete(p.id);
+  const page = $(`.page[data-person="${p.id}"]`, app);
+  const stage = $('.stage', page);
+  const [meEl, themEl] = stage.querySelectorAll('.being');
+  await new Promise((r) => setTimeout(r, 500));
+  for (let i = 0; i < n; i++) {
+    bounce($('.hop', themEl), 'jump');
+    await flyHeart(themEl, meEl, p.color);
+    bounce($('.hop', meEl), 'wiggle');
+    rings(stage, meEl);
+  }
 }
 
 // ---------- Sheets ----------
 
 function openSheet(draw) {
-  const root = $('#sheet-root');
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = '<div class="sheet" role="dialog" aria-modal="true"><div class="grabber"></div><div class="body"></div></div>';
@@ -321,106 +376,101 @@ function openSheet(draw) {
     setTimeout(() => overlay.remove(), 200);
   };
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  root.appendChild(overlay);
+  $('#sheet-root').appendChild(overlay);
   draw(body, close);
   return close;
 }
+const sheetOpen = () => Boolean($('.overlay:not(.out)'));
 
-function proposeSheet(person, replaces) {
-  let kind = 'call';
-  let picked = [];
-  let extra = [];
-
+function skySheet(p) {
+  const { me } = state.data;
   openSheet((body, close) => {
-    const draw = () => {
-      const options = [...suggestions(kind), ...extra.map((s) => new Date(s))]
-        .sort((a, b) => a - b)
-        .map((d) => d.toISOString());
-      const minLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-      body.innerHTML = `
-        <h2>Un moment avec ${esc(person.name)} ${esc(person.emoji)}</h2>
-        <p class="lead">${replaces ? 'Propose d\'autres moments qui t\'arrangent.' : 'Choisis jusqu\'à 3 moments qui t\'arrangent.'}</p>
-        <div class="kinds">
-          ${Object.entries(KIND).map(([key, k]) => `<button class="kind ${kind === key ? 'on' : ''}" data-kind="${key}"><div>${k.emoji}</div>${k.label}</button>`).join('')}
-        </div>
-        <div class="label">Quand ?</div>
-        <div class="chips">
-          ${options.map((iso) => `<button class="chip ${picked.includes(iso) ? 'on' : ''}" data-iso="${iso}"><strong>${esc(dayWord(iso))}</strong><small>${hm(iso)}</small></button>`).join('')}
-          <label class="chip other custom"><strong>Autre…</strong><small>date &amp; heure</small><input type="datetime-local" min="${minLocal}" aria-label="Choisir une autre date"></label>
-        </div>
-        <button class="pill pink" data-send ${picked.length ? '' : 'disabled'}>Envoyer à ${esc(person.name)} 💌</button>`;
-    };
+    body.innerHTML = `
+      <h2 class="sheet-title caps">Notre ciel</h2>
+      <p class="lead">Peins tes moments libres. Là où vos couleurs se mêlent, on se retrouve.</p>
+      <div class="legend"><span><i style="background:${colorOf(me.color).shade}"></i>toi</span><span><i style="background:${colorOf(p.color).shade}"></i>${esc(p.name)}</span></div>
+      <div class="sky"></div>
+      <div class="sky-foot"></div>`;
+    const foot = $('.sky-foot', body);
 
-    const toggle = (iso) => {
-      if (picked.includes(iso)) picked = picked.filter((x) => x !== iso);
-      else if (picked.length >= 3) return toast('3 moments, c\'est parfait 😊');
-      else picked.push(iso);
-      draw();
-    };
-
-    body.addEventListener('click', async (e) => {
-      const kindBtn = e.target.closest('[data-kind]');
-      if (kindBtn) {
-        kind = kindBtn.dataset.kind;
-        picked = [];
-        extra = [];
-        return draw();
+    const showShared = () => {
+      const planned = state.data.moments.filter((m) => m.with?.id === p.id).map((m) => m.slot);
+      const shared = sky.shared().filter((s) => !planned.includes(s));
+      if (!shared.length) {
+        foot.innerHTML = `<p class="tiny">${p.sky.theirs.some((s) => !isPast(s)) ? 'Pas encore de couleur commune.' : `${esc(p.name)} n'a pas encore peint.`}</p>`;
+        return;
       }
-      const chip = e.target.closest('[data-iso]');
-      if (chip) return toggle(chip.dataset.iso);
-      const send = e.target.closest('[data-send]');
-      if (send && picked.length) {
-        send.disabled = true;
-        try {
-          await api('/api/moments', { method: 'POST', body: { with: person.id, kind, slots: picked, replaces } });
-          close();
-          toast(`Envoyé ! On attend ${person.name} 💌`);
-          refresh();
-        } catch (err) {
-          send.disabled = false;
-          toast(err.message);
-        }
+      foot.innerHTML = `<div class="caps tiny">Vos ciels se croisent</div>
+        <div class="chips">${shared.slice(0, 4).map((s) => `<button class="pill soft small" data-slot="${s}">${esc(slotWords(s))}</button>`).join('')}</div>`;
+    };
+
+    const choose = (slot) => {
+      foot.innerHTML = `
+        <div class="big-words">${esc(slotWords(slot))}</div>
+        <div class="row">
+          <button class="pill" data-kind="call">On s'appelle</button>
+          <button class="pill" data-kind="meet">On se voit</button>
+        </div>
+        <button class="link" data-back>retour</button>`;
+      foot.dataset.chosen = slot;
+    };
+
+    let saving = Promise.resolve();
+    const sky = mountSky($('.sky', body), {
+      mine: p.sky.mine,
+      theirs: p.sky.theirs,
+      meColor: me.color,
+      themColor: p.color,
+      onChange: (cells) => {
+        p.sky.mine = cells;
+        showShared();
+        saving = api(`/api/sky/${p.id}`, { method: 'PUT', body: { cells } })
+          .then((data) => { setData(data); })
+          .catch((err) => toast(err.message));
+      },
+    });
+    showShared();
+
+    foot.addEventListener('click', async (e) => {
+      const slotBtn = e.target.closest('[data-slot]');
+      if (slotBtn) return choose(slotBtn.dataset.slot);
+      if (e.target.closest('[data-back]')) return showShared();
+      const kindBtn = e.target.closest('[data-kind]');
+      if (!kindBtn) return undefined;
+      kindBtn.disabled = true;
+      try {
+        await saving;
+        const slot = foot.dataset.chosen;
+        await api('/api/moments', { method: 'POST', body: { with: p.id, slot, kind: kindBtn.dataset.kind, at: slotDate(slot).toISOString() } });
+        close();
+        toast("C'est calé 💗");
+        await refresh(true);
+      } catch (err) {
+        kindBtn.disabled = false;
+        toast(err.message);
       }
       return undefined;
     });
-
-    body.addEventListener('change', (e) => {
-      if (e.target.type !== 'datetime-local' || !e.target.value) return;
-      const d = new Date(e.target.value);
-      if (Number.isNaN(d.getTime()) || d < Date.now()) return toast('Choisis un moment à venir 🙂');
-      const iso = d.toISOString();
-      if (!extra.includes(iso)) extra.push(iso);
-      if (!picked.includes(iso)) {
-        if (picked.length >= 3) picked.shift();
-        picked.push(iso);
-      }
-      return draw();
-    });
-
-    draw();
   });
 }
 
 function momentSheet(m) {
-  const k = KIND[m.kind];
   openSheet((body, close) => {
     body.innerHTML = `
-      <div class="summary">
-        <div class="big">${k.emoji}</div>
-        <div class="when">${esc(longDate(m.at))}</div>
-        <div class="tiny">${k.noun} avec ${esc(m.with?.name)} ${esc(m.with?.emoji)} · ${esc(dayWord(m.at).toLowerCase())}</div>
-      </div>
-      <div class="stack">
-        <a class="pill white" href="/api/moments/${m.id}.ics" style="text-decoration:none">📅 Ajouter à mon calendrier</a>
-        <button class="pill ghost" data-cancel>Je ne peux plus</button>
+      <div class="center" style="padding:8px 0 4px">
+        <div class="caps tiny">${m.kind === 'call' ? "On s'appelle" : 'On se voit'} · ${esc(m.with?.name)}</div>
+        <div class="big-words" style="margin:8px 0 24px">${esc(slotWords(m.slot))}</div>
+        <div class="stack">
+          <a class="pill soft wide" href="/api/moments/${m.id}.ics?for=${state.data.me.id}" style="text-decoration:none">Dans mon calendrier</a>
+          <button class="link" data-cancel>je ne peux plus</button>
+        </div>
       </div>`;
     $('[data-cancel]', body).addEventListener('click', async () => {
-      if (!confirm('Annuler ce moment ? On préviendra l\'autre personne.')) return;
+      if (!confirm(`Prévenir ${m.with?.name} que tu ne peux plus ?`)) return;
       try {
         await api(`/api/moments/${m.id}/cancel`, { method: 'POST' });
         close();
-        toast('Moment annulé. Un autre bientôt ? 💗');
-        refresh();
+        await refresh(true);
       } catch (err) {
         toast(err.message);
       }
@@ -432,16 +482,18 @@ function inviteSheet() {
   const { me } = state.data;
   openSheet((body, close) => {
     body.innerHTML = `
-      <h2>Invite quelqu'un 💌</h2>
-      <p class="lead">Envoie ce lien à quelqu'un que tu aimes. Dès qu'il est ouvert, vous voilà connectés.</p>
-      <button class="pill pink" data-share>Partager le lien</button>
-      <p class="tiny" style="text-align:center;margin:18px 0 0">ou donne ton code</p>
-      <div class="code" style="text-align:center;margin-bottom:26px">${esc(me.code)}</div>
-      <form data-code-form>
-        <div class="label">Quelqu'un t'a donné un code ?</div>
-        <input class="field" name="code" maxlength="6" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="ABC123" style="letter-spacing:.14em;margin-bottom:10px">
-        <button class="pill" type="submit">Ajouter</button>
-      </form>`;
+      <div class="center">
+        <h2 class="sheet-title caps">Inviter</h2>
+        <p class="lead">Envoie ce lien à quelqu'un que tu aimes.</p>
+        <button class="pill wide" data-share style="max-width:320px">Partager le lien</button>
+        <p class="tiny" style="margin:22px 0 2px">ou donne ton code</p>
+        <div class="code">${esc(me.code)}</div>
+        <form data-code-form class="stack" style="margin-top:26px">
+          <p class="tiny" style="margin:0">On t'a donné un code ?</p>
+          <input class="field" name="code" maxlength="6" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="ABC123" style="letter-spacing:.16em">
+          <button class="pill soft" type="submit">Ajouter</button>
+        </form>
+      </div>`;
     $('[data-share]', body).addEventListener('click', shareInvite);
     $('[data-code-form]', body).addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -462,47 +514,27 @@ function inviteSheet() {
 async function shareInvite() {
   const { me } = state.data;
   const url = `${location.origin}/?invite=${me.code}`;
-  const text = `${me.emoji} ${me.name} t'invite sur Pense à toi 💗`;
+  const text = `${me.name} pense à toi 💗`;
   if (navigator.share) {
     await navigator.share({ title: 'Pense à toi', text, url }).catch(() => {});
   } else {
     await navigator.clipboard?.writeText(`${text}\n${url}`).catch(() => {});
-    toast('Lien copié 📋');
+    toast('Lien copié');
   }
 }
 
 async function acceptCode(code, quiet = false) {
   const before = state.data?.people.length || 0;
-  state.data = await api('/api/connect', { method: 'POST', body: { code } });
+  setData(await api('/api/connect', { method: 'POST', body: { code } }));
+  const added = state.data.people.length > before;
+  if (added) state.page = state.data.people.length - 1;
   render();
-  if (!quiet || state.data.people.length > before) {
-    const added = state.data.people.length > before;
-    toast(added ? 'Vous êtes connectés 💞' : 'Vous étiez déjà connectés 💞');
-  }
-}
-
-async function ping(id, btn) {
-  btn.classList.remove('sent');
-  void btn.offsetWidth;
-  btn.classList.add('sent');
-  burst(btn);
-  state.justSent[id] = Date.now();
-  const status = $(`[data-status="${id}"]`);
-  if (status) {
-    status.textContent = 'Petit cœur envoyé ✓';
-    status.classList.add('love');
-  }
-  setTimeout(() => { if (!$('.overlay:not(.out)')) render(); }, 4100);
-  try {
-    await api('/api/pings', { method: 'POST', body: { to: id } });
-  } catch (err) {
-    toast(err.message);
-  }
+  if (!quiet || added) toast(added ? 'Vous voilà reliés 💞' : 'Vous étiez déjà reliés 💞');
 }
 
 function b64ToU8(b64) {
-  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
-  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const padding = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 const u8ToB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -512,8 +544,8 @@ async function syncPush(ask = false) {
   if (Notification.permission === 'denied') return 'denied';
   if (Notification.permission !== 'granted') {
     if (!ask) return 'default';
-    const p = await Notification.requestPermission();
-    if (p !== 'granted') return p;
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return perm;
   }
   const reg = await navigator.serviceWorker.ready;
   state.config ||= await api('/api/config');
@@ -531,43 +563,50 @@ async function syncPush(ask = false) {
 async function enablePush() {
   try {
     const result = await syncPush(true);
-    if (result === 'granted') toast('Notifications activées 🔔');
-    else if (result === 'denied') toast('Tu pourras les activer dans Réglages 🙂');
+    if (result === 'denied') toast('Tu pourras les activer dans Réglages');
   } catch (err) {
-    toast("Impossible d'activer les notifications 🥲");
+    toast("Impossible d'activer les notifications");
     console.error(err);
   }
   state.view = 'home';
   render();
 }
 
-async function refresh() {
-  state.data = await api('/api/me');
-  if (!$('.overlay:not(.out)')) render();
+function setData(data) {
+  state.data = data;
+  const key = JSON.stringify(data);
+  const changed = key !== state.dataKey;
+  state.dataKey = key;
+  return changed;
+}
+
+async function refresh(force = false) {
+  const changed = setData(await api('/api/me'));
+  if ((changed || force) && !sheetOpen()) render();
   return state.data;
 }
 
 // Called whenever the app comes to the foreground.
 async function wakeUp() {
   if (!state.token) return;
-  const data = await refresh();
+  const data = await api('/api/me');
   const seenAt = data.me.seenAt;
-  state.fresh = new Set(data.people.filter((p) => p.pingsFromThem.some((t) => t > seenAt)).map((p) => p.id));
-  if (state.fresh.size) {
-    render();
-    requestAnimationFrame(() => state.fresh.forEach((id) => {
-      const el = $(`[data-avatar="${id}"]`);
-      if (el) burst(el, 5);
-    }));
-    setTimeout(() => state.fresh.clear(), 5000);
+  for (const p of data.people) {
+    const n = p.pingsFromThem.filter((t) => t > seenAt).length;
+    if (n) state.toReceive.set(p.id, n);
   }
-  if (focusMoment) {
-    const el = document.getElementById(`m-${focusMoment}`);
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    focusMoment = null;
-  }
+  // Open on the person who thought of you.
+  const first = data.people.findIndex((p) => state.toReceive.has(p.id));
+  if (first >= 0) state.page = first;
+  if (setData(data) || !$('.pages', app)) render();
+  else receiveIfNeeded();
   api('/api/seen', { method: 'POST' }).catch(() => {});
   navigator.clearAppBadge?.()?.catch(() => {});
+  if (openSkyFor) {
+    const p = data.people.find((x) => x.id === openSkyFor);
+    openSkyFor = null;
+    if (p) skySheet(p);
+  }
 }
 
 function cleanUrl() {
@@ -577,47 +616,31 @@ function cleanUrl() {
 // ---------- Events ----------
 
 app.addEventListener('click', async (e) => {
-  const emoji = e.target.closest('[data-emoji]');
-  if (emoji) {
-    app.querySelectorAll('[data-emoji]').forEach((b) => {
-      b.classList.toggle('on', b === emoji);
-      b.setAttribute('aria-checked', b === emoji);
+  const swatch = e.target.closest('[data-color]');
+  if (swatch) {
+    const color = swatch.dataset.color;
+    app.querySelectorAll('[data-color]').forEach((b) => {
+      b.classList.toggle('on', b === swatch);
+      b.setAttribute('aria-checked', b === swatch);
     });
-    save('emoji', emoji.dataset.emoji);
+    save('color', color);
+    const hop = $('.duo .being.me .hop', app);
+    hop.innerHTML = avatarSVG(color);
+    bounce(hop, 'jump');
     return;
   }
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
   const { act, id } = btn.dataset;
   const person = (pid) => state.data.people.find((p) => p.id === pid);
-  const moment = (mid) => state.data.moments.find((m) => m.id === mid);
-  try {
-    switch (act) {
-      case 'ping': return ping(id, btn);
-      case 'propose': return proposeSheet(person(id));
-      case 'counter': return proposeSheet(person(btn.dataset.person), id);
-      case 'moment': return momentSheet(moment(id));
-      case 'invite': return inviteSheet();
-      case 'share': return shareInvite();
-      case 'enable-push': return enablePush();
-      case 'skip-push': state.view = 'home'; return render();
-      case 'cancel':
-        await api(`/api/moments/${id}/cancel`, { method: 'POST' });
-        toast('Proposition annulée');
-        return refresh();
-      case 'accept': {
-        btn.disabled = true;
-        burst(btn, 9);
-        await api(`/api/moments/${id}/accept`, { method: 'POST', body: { slot: btn.dataset.slot } });
-        toast("C'est calé ! 💗");
-        return setTimeout(refresh, 600);
-      }
-      default: return undefined;
-    }
-  } catch (err) {
-    btn.disabled = false;
-    toast(err.message);
-    return undefined;
+  switch (act) {
+    case 'ping': return ping(id);
+    case 'sky': return skySheet(person(id));
+    case 'moment': e.stopPropagation(); return momentSheet(state.data.moments.find((m) => m.id === id));
+    case 'invite': return inviteSheet();
+    case 'enable-push': return enablePush();
+    case 'skip-push': state.view = 'home'; return render();
+    default: return undefined;
   }
 });
 
@@ -631,7 +654,7 @@ app.addEventListener('submit', async (e) => {
       method: 'POST',
       body: {
         name: e.target.name.value,
-        emoji: $('.emoji.on', e.target)?.dataset.emoji,
+        color: $('.swatch.on', e.target)?.dataset.color,
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         invite,
       },
@@ -639,12 +662,12 @@ app.addEventListener('submit', async (e) => {
     state.token = res.token;
     save('token', res.token);
     delete res.token;
-    state.data = res;
+    setData(res);
     invite = null;
     cleanUrl();
     state.view = pushSupported && Notification.permission !== 'granted' ? 'notif' : 'home';
     render();
-    if (Notification.permission === 'granted') syncPush().catch(() => {});
+    if (pushSupported && Notification.permission === 'granted') syncPush().catch(() => {});
   } catch (err) {
     submit.disabled = false;
     toast(err.message);
@@ -654,7 +677,7 @@ app.addEventListener('submit', async (e) => {
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'push') refresh().catch(() => {});
   if (e.data?.type === 'open') {
-    focusMoment = new URL(e.data.url, location.origin).searchParams.get('moment');
+    openSkyFor = new URL(e.data.url, location.origin).searchParams.get('sky');
     wakeUp().catch(() => {});
   }
 });
@@ -663,12 +686,17 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') wakeUp().catch(() => {});
 });
 setInterval(() => {
-  if (document.visibilityState === 'visible' && state.token) refresh().catch(() => {});
+  if (document.visibilityState === 'visible' && state.token && state.view === 'home') refresh().catch(() => {});
 }, 30000);
+addEventListener('resize', () => {
+  app.querySelectorAll('.page').forEach(place);
+  placeDuo();
+});
 
 // ---------- Boot ----------
 
 async function boot() {
+  installGrain();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   render();
   if (state.token) {
@@ -676,7 +704,7 @@ async function boot() {
       await wakeUp();
     } catch {
       if (state.token) {
-        app.innerHTML = `<div class="center">${MASCOT}<h2>Pas de connexion 🥲</h2><p class="lead">On réessaie dans un instant.</p><button class="pill" onclick="location.reload()">Réessayer</button></div>`;
+        app.innerHTML = '<div class="solo"><h1>Pas de connexion</h1><p class="lead">On réessaie dans un instant.</p><button class="pill" onclick="location.reload()">Réessayer</button></div>';
       }
       return;
     }

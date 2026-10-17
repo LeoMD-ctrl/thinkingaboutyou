@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const EMPTY = () => ({ users: {}, links: [], pings: [], moments: {} });
+const EMPTY = () => ({ users: {}, links: [], pings: [], moments: {}, skies: {} });
 
 // Tiny JSON-file database. Plenty for a handful of people; every write is
 // atomic (tmp file + rename) so a crash never leaves a half-written file.

@@ -1,10 +1,15 @@
 # Pense à toi 💗
 
-Un petit pager du cœur pour iPhone.
+Deux petits êtres tout doux, toi et l'autre, posés sur un îlot.
 
-- **Un seul bouton** : le gros cœur. Tu le touches et l'autre reçoit une notif : « 🌷 Maman — pense à toi 💗 ».
-- **« On se trouve un moment ? »** : tu proposes un appel 📞 ou de se voir 🫶, tu touches 1 à 3 créneaux suggérés (ou « Autre… »), c'est envoyé. L'autre touche le créneau qui lui va : c'est calé, vous recevez tous les deux une notif, puis un rappel 30 min avant. Si rien ne va, « Aucun ne me va » permet de proposer d'autres moments.
-- **Inviter** : le bouton « + » partage un lien (iMessage, WhatsApp…). La personne qui l'ouvre est reliée à toi automatiquement.
+- **Une pensée = un toucher.** Touche l'autre personnage : ton petit être sautille, un cœur traverse l'écran, l'autre reçoit une notif « Maman — pense à toi 💗 ». Quand tu ouvres l'app, les cœurs reçus arrivent en volant vers toi.
+- **Ils se rapprochent quand vous vous pensez.** Plus les pensées vont dans les deux sens, plus les deux personnages se rapprochent. Quand vous vous manquez tous les deux, ils se touchent et sourient. Une personne seule ne peut les amener qu'à mi-chemin.
+- **Notre ciel.** Une semaine découpée en matin / midi / aprèm / soir. Chacun peint au doigt ses moments libres, comme à l'aérographe, dans sa couleur. Là où les couleurs se mêlent apparaît un petit cœur : on le touche, on choisit « on s'appelle » ou « on se voit », et c'est calé, sans aller-retour ni créneau horaire. Rappel un peu avant, et un événement « 🫶 Maman » pour le calendrier.
+- **Inviter** : la dernière page (balaye vers la gauche) montre une place vide à côté de toi ; le lien partagé relie automatiquement.
+
+## Direction artistique
+
+Inspirée de *Subpar Pool*, en plus minimaliste : aplats pastel, typo ronde et grasse (Fredoka), pilules épaisses, et des ombres en **grain d'aérographe** (un filtre SVG qui transforme un dégradé en nuage de points). Presque aucun texte : pas de compteurs ni de listes, seulement des personnages qui bougent.
 
 ## La stack, et pourquoi
 
@@ -22,7 +27,8 @@ Tu leur envoies un lien et c'est tout. Si l'idée prend, on pourra écrire une v
 server.js          démarrage, clés VAPID, envoi des push (web-push)
 src/app.js         API + fichiers statiques + rappels
 src/store.js       mini base JSON (data/db.json), écritures atomiques
-public/            l'app : index.html, style.css, app.js, sw.js (service worker), icônes
+public/            l'app : app.js (écrans), avatar.js (personnages + grain), sky.js (notre ciel),
+                   style.css, sw.js (service worker), icônes
 test/              tests de l'API (node --test)
 ```
 
@@ -62,11 +68,14 @@ Si quelqu'un a déjà l'app installée, il suffit d'entrer le code à 6 lettres 
 ## Bon à savoir
 
 - Pas de mot de passe : chaque téléphone garde une clé secrète. Si l'app est supprimée, on recrée un profil et on se ré-invite.
-- Deux taps rapprochés sur le cœur ne comptent qu'une fois. Plusieurs cœurs dans la journée deviennent « pense encore à toi 💗 ×3 ».
-- « Ajouter à mon calendrier » télécharge un fichier `.ics`, avec une alarme 30 min avant.
+- Deux taps rapprochés ne comptent qu'une fois. Plusieurs pensées dans la journée deviennent « pense encore à toi 💗 ×3 ».
+- Une notif « a peint ses moments libres » part au plus une fois par jour, et « vos ciels se croisent » une seule fois par moment commun.
 
-## Idées pour la suite
+## La suite : une vraie app iOS
 
-- Une petite relance douce quand ça fait longtemps qu'on ne s'est pas parlé (« Ça fait 3 semaines… on s'appelle ? »).
-- Des moments récurrents (« l'appel du dimanche »).
-- Une vraie app SwiftUI avec un widget écran d'accueil / Apple Watch pour envoyer le cœur sans ouvrir l'app.
+Cette version web sert de labo pour le design. L'étape d'après est une app SwiftUI qui parlera au même serveur. Elle demande un compte Apple Developer (99 €/an) ; pas besoin de Mac, la compilation et l'envoi sur TestFlight peuvent se faire dans le cloud. Elle débloquerait :
+
+- un bouton « 💗 renvoyer une pensée » directement dans la notif ;
+- le **bouton Action** des iPhone 15 Pro / 16 Pro pour envoyer une pensée sans ouvrir l'app ;
+- un widget écran verrouillé avec les deux personnages ;
+- une **Live Activity** le jour d'un moment calé : les deux personnages qui se rapprochent dans la Dynamic Island.

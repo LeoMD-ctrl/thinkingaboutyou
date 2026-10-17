@@ -7,9 +7,18 @@ import { Store } from './store.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const KINDS = { call: { emoji: '📞', word: 'appel' }, meet: { emoji: '🫶', word: 'moment ensemble' } };
+const COLORS = ['rose', 'ciel', 'menthe', 'miel', 'lilas', 'peche'];
+const KINDS = { call: '📞', meet: '🫶' };
+// Moments are soft parts of a day, not clock times.
+const BANDS = {
+  matin: { word: 'matin', start: 9 * 60, end: 12 * 60 },
+  midi: { word: 'midi', start: 12 * 60, end: 14 * 60 },
+  aprem: { word: 'après-midi', start: 14 * 60 + 30, end: 18 * 60 },
+  soir: { word: 'soir', start: 19 * 60, end: 22 * 60 },
+};
+const SLOT_RE = /^(\d{4}-\d{2}-\d{2}):(matin|midi|aprem|soir)$/;
 const REMIND_BEFORE_MS = 30 * 60 * 1000;
-const MAX_SLOTS = 3;
+const WEEK_MS = 7 * 86400000;
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -23,20 +32,17 @@ const TYPES = {
 
 const id = () => crypto.randomBytes(9).toString('base64url');
 const code = () => Array.from(crypto.randomBytes(6), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+const pairKey = (a, b) => [a, b].sort().join(':');
 
-function validTz(tz) {
-  try {
-    new Intl.DateTimeFormat('fr-FR', { timeZone: tz });
-    return tz;
-  } catch {
-    return 'Europe/Paris';
-  }
+// "2026-10-18:soir" → "dimanche soir"
+export function slotWords(slot) {
+  const [, date, band] = slot.match(SLOT_RE);
+  const day = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
+  return `${day} ${BANDS[band].word}`;
 }
 
-export function formatSlot(iso, tz) {
-  return new Intl.DateTimeFormat('fr-FR', {
-    weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: validTz(tz),
-  }).format(new Date(iso));
+function yesterday() {
+  return new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 }
 
 class HttpError extends Error {
@@ -59,14 +65,13 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
 
   // ---------- helpers ----------
 
-  const publicUser = (u) => ({ id: u.id, name: u.name, emoji: u.emoji });
+  const publicUser = (u) => ({ id: u.id, name: u.name, color: u.color });
 
   async function notify(user, { title, body, tag, url = '/', unread = true }) {
     if (unread) user.unread = (user.unread || 0) + 1;
     store.save();
     const payload = JSON.stringify({ title, body, tag, url, badge: user.unread || 0 });
-    const subs = user.subs || [];
-    await Promise.all(subs.map(async (sub) => {
+    await Promise.all((user.subs || []).map(async (sub) => {
       try {
         await sendPush(sub, payload);
       } catch (err) {
@@ -80,32 +85,40 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     }));
   }
 
-  function visibleMoment(m, now = Date.now()) {
-    if (m.status === 'confirmed') return new Date(m.at).getTime() > now - 2 * 3600 * 1000;
-    if (m.status === 'proposed') return m.slots.some((s) => new Date(s).getTime() > now);
-    return false;
+  function skyOf(a, b) {
+    const key = pairKey(a, b);
+    db.skies[key] ||= { cells: {}, announced: [], paintedNotice: {} };
+    const sky = db.skies[key];
+    const keep = yesterday();
+    for (const uid of Object.keys(sky.cells)) sky.cells[uid] = sky.cells[uid].filter((s) => s.slice(0, 10) >= keep);
+    sky.announced = sky.announced.filter((s) => s.slice(0, 10) >= keep);
+    return sky;
   }
+
+  const overlap = (sky, a, b) => (sky.cells[a] || []).filter((s) => (sky.cells[b] || []).includes(s)).sort();
 
   function momentFor(m, me) {
     const other = db.users[m.from === me.id ? m.to : m.from];
-    return {
-      id: m.id, kind: m.kind, status: m.status, mine: m.from === me.id,
-      with: other ? publicUser(other) : null, slots: m.slots, at: m.at, createdAt: m.createdAt,
-    };
+    return { id: m.id, kind: m.kind, slot: m.slot, at: m.at, with: other ? publicUser(other) : null };
   }
 
   function snapshot(me) {
     const now = Date.now();
-    const since = now - 48 * 3600 * 1000;
+    const since = now - WEEK_MS;
     const people = store.peopleOf(me.id).map((p) => {
-      const fromThem = db.pings.filter((x) => x.from === p.id && x.to === me.id && x.at > since).map((x) => x.at);
-      const fromMe = db.pings.filter((x) => x.from === me.id && x.to === p.id).map((x) => x.at);
-      return { ...publicUser(p), pingsFromThem: fromThem, lastFromMe: fromMe.length ? Math.max(...fromMe) : null };
+      const between = (from, to) => db.pings.filter((x) => x.from === from && x.to === to && x.at > since).map((x) => x.at);
+      const sky = skyOf(me.id, p.id);
+      return {
+        ...publicUser(p),
+        pingsFromThem: between(p.id, me.id),
+        pingsFromMe: between(me.id, p.id),
+        sky: { mine: sky.cells[me.id] || [], theirs: sky.cells[p.id] || [] },
+      };
     });
     const moments = Object.values(db.moments)
-      .filter((m) => (m.from === me.id || m.to === me.id) && visibleMoment(m, now))
+      .filter((m) => (m.from === me.id || m.to === me.id) && m.status === 'confirmed' && new Date(m.at).getTime() > now - 3 * 3600000)
       .map((m) => momentFor(m, me))
-      .sort((a, b) => new Date(a.at || a.slots[0]) - new Date(b.at || b.slots[0]));
+      .sort((a, b) => new Date(a.at) - new Date(b.at));
     return {
       me: { ...publicUser(me), code: me.code, seenAt: me.seenAt || 0, hasPush: (me.subs || []).length > 0 },
       people,
@@ -132,31 +145,23 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     return n;
   }
 
-  function cleanEmoji(emoji) {
-    const e = String(emoji || '').trim();
-    return e && [...e].length <= 4 ? e : '🌷';
+  const cleanColor = (c) => (COLORS.includes(c) ? c : COLORS[0]);
+
+  function validTz(tz) {
+    try {
+      new Intl.DateTimeFormat('fr-FR', { timeZone: tz });
+      return tz;
+    } catch {
+      return 'Europe/Paris';
+    }
   }
 
   async function connect(me, inviter) {
     if (!inviter || inviter.id === me.id) return false;
     if (!store.link(me.id, inviter.id)) return false;
     store.save();
-    await notify(inviter, {
-      title: `${me.emoji} ${me.name}`,
-      body: `a rejoint Pense à toi ! Envoie-lui un premier cœur 💗`,
-      tag: `join-${me.id}`,
-    });
+    await notify(inviter, { title: me.name, body: 'est arrivé·e. Envoie-lui une première pensée 💗', tag: `join-${me.id}` });
     return true;
-  }
-
-  function parseSlots(slots) {
-    if (!Array.isArray(slots)) throw new HttpError(400, 'Propose au moins un moment');
-    const now = Date.now();
-    const clean = [...new Set(slots.map((s) => new Date(s)).filter((d) => !Number.isNaN(d.getTime()) && d.getTime() > now - 60000).map((d) => d.toISOString()))]
-      .sort()
-      .slice(0, MAX_SLOTS);
-    if (!clean.length) throw new HttpError(400, 'Propose au moins un moment à venir');
-    return clean;
   }
 
   // ---------- routes ----------
@@ -175,7 +180,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
   route('POST', /^\/api\/users$/, async (req, _, body) => {
     const user = {
       id: id(), token: crypto.randomBytes(24).toString('base64url'), code: code(),
-      name: cleanName(body.name), emoji: cleanEmoji(body.emoji), tz: validTz(body.tz),
+      name: cleanName(body.name), color: cleanColor(body.color), tz: validTz(body.tz),
       subs: [], unread: 0, seenAt: Date.now(), createdAt: Date.now(),
     };
     while (store.userByCode(user.code)) user.code = code();
@@ -190,7 +195,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
   route('PATCH', /^\/api\/me$/, (req, _, body) => {
     const me = requireUser(req);
     if (body.name !== undefined) me.name = cleanName(body.name);
-    if (body.emoji !== undefined) me.emoji = cleanEmoji(body.emoji);
+    if (body.color !== undefined) me.color = cleanColor(body.color);
     if (body.tz !== undefined) me.tz = validTz(body.tz);
     store.save();
     return snapshot(me);
@@ -234,57 +239,76 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     // Ignore accidental double taps.
     if (last && now - last.at < 2000) return { ok: true };
     db.pings.push({ from: me.id, to: to.id, at: now });
-    if (db.pings.length > 2000) db.pings.splice(0, db.pings.length - 2000);
-    const today = db.pings.filter((p) => p.from === me.id && p.to === to.id && now - p.at < 12 * 3600 * 1000).length;
+    if (db.pings.length > 5000) db.pings.splice(0, db.pings.length - 5000);
+    const recent = db.pings.filter((p) => p.from === me.id && p.to === to.id && now - p.at < 12 * 3600000).length;
     await notify(to, {
-      title: `${me.emoji} ${me.name}`,
-      body: today > 1 ? `pense encore à toi 💗 ×${today}` : 'pense à toi 💗',
+      title: me.name,
+      body: recent > 1 ? `pense encore à toi 💗 ×${recent}` : 'pense à toi 💗',
       tag: `ping-${me.id}`,
     });
     return { ok: true };
   });
 
-  route('POST', /^\/api\/moments$/, async (req, _, body) => {
+  // Paint my free moments in the sky I share with someone.
+  route('PUT', /^\/api\/sky\/([\w-]+)$/, async (req, [otherId], body) => {
     const me = requireUser(req);
-    const to = requirePerson(me, body.with);
-    const kind = KINDS[body.kind] ? body.kind : 'call';
-    const slots = parseSlots(body.slots);
-    if (body.replaces) {
-      const old = db.moments[body.replaces];
-      if (old && (old.from === me.id || old.to === me.id) && old.status === 'proposed') old.status = 'replaced';
-    }
-    const m = { id: id(), from: me.id, to: to.id, kind, slots, at: null, status: 'proposed', createdAt: Date.now() };
-    db.moments[m.id] = m;
+    const other = requirePerson(me, otherId);
+    if (!Array.isArray(body.cells)) throw new HttpError(400, 'Ciel invalide');
+    const keep = yesterday();
+    const sky = skyOf(me.id, other.id);
+    const before = sky.cells[me.id] || [];
+    sky.cells[me.id] = [...new Set(body.cells.filter((s) => typeof s === 'string' && SLOT_RE.test(s) && s.slice(0, 10) >= keep))]
+      .sort()
+      .slice(0, 28);
+    const fresh = overlap(sky, me.id, other.id).filter((s) => !sky.announced.includes(s));
     store.save();
-    const what = kind === 'call' ? "aimerait t'appeler 📞" : 'aimerait te voir 🫶';
-    await notify(to, {
-      title: `${me.emoji} ${me.name}`,
-      body: `${what} Quand es-tu dispo ?`,
-      tag: `moment-${m.id}`,
-      url: `/?moment=${m.id}`,
-    });
-    return momentFor(m, me);
+
+    if (fresh.length) {
+      sky.announced.push(...fresh);
+      await notify(other, {
+        title: `${me.name} & toi`,
+        body: `Vos ciels se croisent ${slotWords(fresh[0])} ☁️`,
+        tag: `sky-${pairKey(me.id, other.id)}`,
+        url: `/?sky=${me.id}`,
+      });
+    } else if (sky.cells[me.id].some((s) => !before.includes(s))) {
+      // Gently tell the other side there is something to paint along with — once a day at most.
+      const last = sky.paintedNotice[me.id] || 0;
+      if (Date.now() - last > 86400000) {
+        sky.paintedNotice[me.id] = Date.now();
+        await notify(other, {
+          title: me.name,
+          body: 'a peint ses moments libres dans votre ciel ☁️',
+          tag: `sky-${pairKey(me.id, other.id)}`,
+          url: `/?sky=${me.id}`,
+        });
+      }
+    }
+    return snapshot(me);
   });
 
-  route('POST', /^\/api\/moments\/([\w-]+)\/accept$/, async (req, [mid], body) => {
+  // Turn a shared free moment into a planned one. Both already said yes by painting it.
+  route('POST', /^\/api\/moments$/, async (req, _, body) => {
     const me = requireUser(req);
-    const m = db.moments[mid];
-    if (!m || m.to !== me.id) throw new HttpError(404, 'Moment introuvable');
-    if (m.status !== 'proposed') throw new HttpError(409, 'Ce moment a déjà été réglé');
-    const slot = m.slots.find((s) => s === body.slot);
-    if (!slot) throw new HttpError(400, 'Ce créneau ne fait pas partie des propositions');
-    m.status = 'confirmed';
-    m.at = slot;
-    store.save();
-    const from = db.users[m.from];
-    if (from) {
-      await notify(from, {
-        title: `${me.emoji} ${me.name}`,
-        body: `C'est calé ! ${KINDS[m.kind].emoji} ${formatSlot(slot, from.tz)}`,
-        tag: `moment-${m.id}`,
-        url: `/?moment=${m.id}`,
-      });
+    const other = requirePerson(me, body.with);
+    const kind = KINDS[body.kind] ? body.kind : 'call';
+    if (typeof body.slot !== 'string' || !SLOT_RE.test(body.slot)) throw new HttpError(400, 'Moment invalide');
+    const at = new Date(body.at);
+    if (Number.isNaN(at.getTime()) || at.getTime() < Date.now() - 6 * 3600000) throw new HttpError(400, 'Ce moment est passé');
+    if (!overlap(skyOf(me.id, other.id), me.id, other.id).includes(body.slot)) {
+      throw new HttpError(409, "Ce moment n'est plus libre des deux côtés");
     }
+    const existing = Object.values(db.moments).find((m) => m.status === 'confirmed' && m.slot === body.slot
+      && pairKey(m.from, m.to) === pairKey(me.id, other.id));
+    if (existing) return momentFor(existing, me);
+    const m = { id: id(), from: me.id, to: other.id, kind, slot: body.slot, at: at.toISOString(), status: 'confirmed', createdAt: Date.now() };
+    db.moments[m.id] = m;
+    store.save();
+    await notify(other, {
+      title: me.name,
+      body: `C'est calé : ${slotWords(m.slot)} ${KINDS[kind]}`,
+      tag: `moment-${m.id}`,
+    });
     return momentFor(m, me);
   });
 
@@ -292,39 +316,40 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     const me = requireUser(req);
     const m = db.moments[mid];
     if (!m || (m.from !== me.id && m.to !== me.id)) throw new HttpError(404, 'Moment introuvable');
-    if (m.status !== 'proposed' && m.status !== 'confirmed') return { ok: true };
-    const wasConfirmed = m.status === 'confirmed';
+    if (m.status !== 'confirmed') return { ok: true };
     m.status = 'cancelled';
+    // Take that moment out of my sky so it does not come straight back.
+    const sky = skyOf(m.from, m.to);
+    sky.cells[me.id] = (sky.cells[me.id] || []).filter((s) => s !== m.slot);
     store.save();
     const other = db.users[m.from === me.id ? m.to : m.from];
-    if (other && (wasConfirmed || m.to === me.id)) {
+    if (other) {
       await notify(other, {
-        title: `${me.emoji} ${me.name}`,
-        body: wasConfirmed
-          ? `ne peut plus pour ${KINDS[m.kind].emoji} ${formatSlot(m.at, other.tz)}. On trouve un autre moment ?`
-          : `n'est pas dispo à ces moments-là. On en trouve un autre ?`,
+        title: me.name,
+        body: `ne peut plus ${slotWords(m.slot)}. On repeint notre ciel ?`,
         tag: `moment-${m.id}`,
       });
     }
     return { ok: true };
   });
 
-  route('GET', /^\/api\/moments\/([\w-]+)\.ics$/, (req, [mid], _, res) => {
+  route('GET', /^\/api\/moments\/([\w-]+)\.ics$/, (req, [mid], _, res, url) => {
     const m = db.moments[mid];
     if (!m || m.status !== 'confirmed') throw new HttpError(404, 'Moment introuvable');
-    const a = db.users[m.from];
-    const b = db.users[m.to];
+    const viewer = url.searchParams.get('for');
+    const other = db.users[viewer === m.from ? m.to : m.from];
+    const band = BANDS[m.slot.match(SLOT_RE)[2]];
     const stamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
     const start = new Date(m.at);
-    const end = new Date(start.getTime() + (m.kind === 'call' ? 30 : 120) * 60000);
-    const title = `${KINDS[m.kind].emoji} ${a?.name ?? ''} & ${b?.name ?? ''}`.replace(/[,;\\]/g, ' ');
+    const end = new Date(start.getTime() + (band.end - band.start) * 60000);
+    const title = `${KINDS[m.kind]} ${other?.name ?? ''}`.replace(/[,;\\\r\n]/g, ' ');
     const ics = [
       'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Pense a toi//FR', 'BEGIN:VEVENT',
       `UID:${m.id}@pense-a-toi`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`,
       `SUMMARY:${title}`, 'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', `DESCRIPTION:${title}`, 'END:VALARM',
       'END:VEVENT', 'END:VCALENDAR', '',
     ].join('\r\n');
-    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `inline; filename="moment.ics"` });
+    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': 'inline; filename="moment.ics"' });
     res.end(ics);
     return undefined;
   });
@@ -338,15 +363,12 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
       if (t - now > REMIND_BEFORE_MS || t < now) continue;
       m.reminded = true;
       store.save();
-      const mins = Math.max(1, Math.round((t - now) / 60000));
-      for (const [me, otherId] of [[m.from, m.to], [m.to, m.from]]) {
-        const user = db.users[me];
+      for (const [uid, otherId] of [[m.from, m.to], [m.to, m.from]]) {
+        const user = db.users[uid];
         const other = db.users[otherId];
         if (!user || !other) continue;
-        const body = m.kind === 'call'
-          ? `Dans ${mins} min : appel avec ${other.name} 📞`
-          : `Dans ${mins} min : tu retrouves ${other.name} 🫶`;
-        await notify(user, { title: 'Pense à toi 💗', body, tag: `remind-${m.id}`, url: `/?moment=${m.id}`, unread: false });
+        const body = m.kind === 'call' ? `Ton appel avec ${other.name}, c'est bientôt 📞` : `Tu retrouves ${other.name} bientôt 🫶`;
+        await notify(user, { title: 'Pense à toi', body, tag: `remind-${m.id}`, unread: false });
       }
     }
   }
@@ -376,7 +398,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
       'Content-Type': TYPES[ext] || 'application/octet-stream',
       'Cache-Control': ext === '.png' ? 'public, max-age=86400' : 'no-cache',
     });
-    res.end(content);
+    return res.end(content);
   }
 
   function serveManifest(res, url) {
@@ -385,12 +407,12 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     const manifest = {
       name: 'Pense à toi',
       short_name: 'Pense à toi',
-      description: 'Un petit cœur pour dire « je pense à toi », et un moment pour se retrouver.',
+      description: 'Deux petits êtres qui se rapprochent quand on pense l’un à l’autre.',
       start_url: start,
       scope: '/',
       display: 'standalone',
-      background_color: '#FFF6F1',
-      theme_color: '#FFF6F1',
+      background_color: '#F3E7DC',
+      theme_color: '#F3E7DC',
       lang: 'fr',
       icons: [
         { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -429,7 +451,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
       if (!r) throw new HttpError(404, 'Introuvable');
       const params = url.pathname.match(r.pattern).slice(1);
       const body = req.method === 'GET' ? {} : await readJson(req);
-      const result = await r.handler(req, params, body, res);
+      const result = await r.handler(req, params, body, res, url);
       if (result === undefined) return undefined;
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(result));
