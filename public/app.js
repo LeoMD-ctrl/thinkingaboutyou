@@ -2,7 +2,8 @@
 // Touch their home to send a lantern; slide the sky to travel in time;
 // hold your dock to light a candle ("I'm free then"). Two candles make a star.
 
-import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, backSVG, frontSVG, placeSVG, plotSVG, glowSprite } from './scene.js';
+import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, CLOUDS, backSVG, frontSVG, cloudSVG, placeSVG, plotSVG, glowSprite } from './scene.js';
+import { createLife } from './life.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
@@ -32,6 +33,7 @@ const state = {
   known: null, // ping timestamps already shown
   config: null,
 };
+let life = null;
 
 function load(k) {
   try { return localStorage.getItem(`pat:${k}`); } catch { return null; }
@@ -128,10 +130,11 @@ function blendAt(h) {
 // ---------- World ----------
 
 const layerUrls = {};
-function layerUrl(kind, phase) {
-  const key = `${kind}-${phase}`;
+function layerUrl(kind, phase, i) {
+  const key = `${kind}-${phase}-${i ?? ''}`;
   if (!layerUrls[key]) {
-    const svg = kind === 'back' ? backSVG(PHASES[phase]) : frontSVG(PHASES[phase]);
+    const c = PHASES[phase];
+    const svg = kind === 'back' ? backSVG(c) : kind === 'front' ? frontSVG(c) : cloudSVG(c, i);
     layerUrls[key] = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
   }
   return layerUrls[key];
@@ -143,10 +146,11 @@ function buildWorld() {
   app.innerHTML = `
     <div class="world">
       <div class="layers">${phases.map((p) => `<img alt="" data-back="${p}" src="${layerUrl('back', p)}">`).join('')}</div>
-      ${svgOpen('bodies')}<g id="moon"></g><g id="sun"></g></svg>
+      ${svgOpen('bodies')}<g id="moon"></g><g id="sun"></g>
+        <g id="clouds">${CLOUDS.map(({ box: [x, y, w, h] }, i) => `<image class="drift" style="animation-delay:-${i * 17}s" x="${x}" y="${y}" width="${w}" height="${h}"/>`).join('')}</g></svg>
       <div class="layers">${phases.map((p) => `<img alt="" data-front="${p}" src="${layerUrl('front', p)}">`).join('')}</div>
       ${svgOpen('overlay')}
-        <g id="o-reflect"></g><g id="o-static"></g><g id="o-fx"></g>
+        <g id="o-reflect"></g><g id="o-back"></g><g id="o-static"></g><g id="o-water"></g><g id="o-front"></g><g id="o-fx"></g>
         <g id="o-cloud" opacity="0"><path d="M112 116a26 26 0 0 1 38-22 34 34 0 0 1 62 0 30 30 0 0 1 54 12 22 22 0 0 1 12 36H118a22 22 0 0 1-6-26z" fill="#FFF8F1" opacity=".92"/><text x="${W / 2}" y="129" text-anchor="middle"></text></g>
       </svg>
       <div class="hint"></div>
@@ -155,8 +159,17 @@ function buildWorld() {
     <div class="card-root"></div>`;
   state.phase = null;
   state.slot = undefined;
+  life?.stop();
+  life = createLife({
+    back: $('#o-back', app),
+    water: $('#o-water', app),
+    front: $('#o-front', app),
+    ripple: (x, y, size) => ripples(x, y, size),
+    say: (x, y, text) => label(x, y, text),
+  });
   bindGestures($('.overlay', app));
   applyTime();
+  life.start();
 }
 
 function applyTime() {
@@ -212,6 +225,10 @@ function applyTime() {
   $('text', cloud).textContent = timeWords(t);
 
   const slot = slotAt(t);
+  if (dominant !== state.phase) {
+    app.querySelectorAll('#clouds image').forEach((img, i) => img.setAttribute('href', layerUrl('cloud', dominant, i)));
+    life.setPhase(dominant);
+  }
   if (dominant !== state.phase || slot !== state.slot) {
     state.phase = dominant;
     state.slot = slot;
@@ -236,6 +253,13 @@ function drawStatic() {
     const glow = Math.min(1, c.lit * 0.5 + warmth * 0.8);
     const [wx, wy] = place.window;
     out += `<image class="window-glow" data-glow="${i}" href="${glowSprite(c.light, 120)}" x="${wx - 34}" y="${wy - 34}" width="68" height="68" opacity="${glow}"/>`;
+    if (place.chimney && warmth > 0.1) {
+      const [cx, cy] = place.chimney;
+      out += `<g class="smoke" opacity="${0.5 + warmth / 2}">${[0, 1, 2].map((k) => `<circle cx="${cx}" cy="${cy}" r="3.4" fill="${c.cloud}" style="animation-delay:${k * 1.3}s"/>`).join('')}</g>`;
+    }
+    if (place.type === 'phare' && (state.phase === 'dusk' || state.phase === 'night')) {
+      out += `<g transform="translate(${wx} ${wy})"><path class="beam" d="M0 0 L150 -15 L150 15Z" fill="${c.light}" opacity=".2"/></g>`;
+    }
     out += placeSVG(place, c);
     out += `<rect data-place="${i}" x="${place.x - 30}" y="${place.y - 78}" width="60" height="88" fill-opacity="0" pointer-events="all"/>`;
   });
@@ -338,13 +362,14 @@ function label(x, y, text) {
   setTimeout(() => g.remove(), 2200);
 }
 
-function ripples(x, y) {
+function ripples(x, y, size = 1) {
+  const k = size * Math.max(0.4, (y - 488) / 72);
   for (let i = 0; i < 3; i++) {
-    const g = el(`<ellipse cx="${x}" cy="${y}" rx="8" ry="2" fill="none" stroke="#E9F7FB" stroke-width="2.5"/>`);
+    const g = el(`<ellipse cx="${x}" cy="${y}" rx="8" ry="2" fill="none" stroke="#E9F7FB" stroke-width="${Math.max(1.2, 2.5 * Math.min(1, k))}"/>`);
     const e = g.firstChild;
     setTimeout(() => animate(1500, (u) => {
-      e.setAttribute('rx', 8 + u * 110);
-      e.setAttribute('ry', 2 + u * 24);
+      e.setAttribute('rx', (8 + u * 110) * k);
+      e.setAttribute('ry', (2 + u * 24) * k);
       e.setAttribute('opacity', 1 - u);
     }).then(() => g.remove()), i * 220);
   }
@@ -516,11 +541,12 @@ function bindGestures(svg) {
     const v = toView(e);
     g = {
       x: e.clientX, y: e.clientY, start: state.offset, moved: false, held: false,
-      target: e.target.closest('[data-place],[data-plot],[data-lantern],[data-star]'),
+      target: e.target.closest('[data-place],[data-plot],[data-lantern],[data-star],[data-duck],[data-frog]'),
+      v,
       last: [{ x: e.clientX, t: performance.now() }],
     };
     svg.setPointerCapture(e.pointerId);
-    if (v.y > 580 && state.data) {
+    if (v.y > 560 && state.data && !g.target) {
       press = setTimeout(() => { if (g && !g.moved) { g.held = true; toggleCandle(); } }, 450);
     }
   });
@@ -566,7 +592,13 @@ function bindGestures(svg) {
     if (e.type === 'pointercancel') return;
     scheduleReturn();
     const t = gesture.target;
-    if (!t) return;
+    if (!t) {
+      // Touching the water makes rings.
+      const { x, y } = gesture.v;
+      if (y > 500 && y < 640) ripples(x, y, 0.6);
+      return;
+    }
+    if (life.poke(t)) return;
     if (t.dataset.place !== undefined) sendThought(Number(t.dataset.place));
     else if (t.dataset.plot !== undefined) inviteCard();
     else if (t.dataset.star) travelToSlot(t.dataset.star);
@@ -820,7 +852,12 @@ navigator.serviceWorker?.addEventListener('message', (e) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') wakeUp().catch(() => {});
+  if (document.visibilityState === 'visible') {
+    life?.start();
+    wakeUp().catch(() => {});
+  } else {
+    life?.stop();
+  }
 });
 setInterval(() => {
   if (document.visibilityState !== 'visible') return;

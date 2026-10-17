@@ -38,13 +38,27 @@ export const PHASES = {
 
 // Where the people you love live, on the far shore. `window` is where their light shines.
 export const PLACES = [
-  { type: 'maison', the: 'la maison', x: 318, y: 468, window: [318, 457] },
+  { type: 'maison', the: 'la maison', x: 318, y: 468, window: [318, 457], chimney: [328, 430] },
   { type: 'phare', the: 'le phare', x: 58, y: 470, window: [58, 410] },
   { type: 'moulin', the: 'le moulin', x: 100, y: 490, window: [100, 474] },
   { type: 'cabane', the: 'la cabane', x: 250, y: 494, window: [250, 485] },
 ];
 
-export const DOCK = { x: 195, y: 600 };
+// One vanishing point in the middle of the horizon: everything lying on the
+// water converges toward it, and gets smaller and denser as it goes far.
+export const HORIZON = 488;
+export const VANISH = { x: 195, y: HORIZON };
+export const depth = (y) => y - HORIZON;
+// Screen x of a point on the water plane, `u` units to the side of the vanishing line.
+export const onPlane = (u, y) => VANISH.x + u * depth(y);
+// Scale of a thing standing on the water at row y (1 at the middle of the lake).
+export const scaleAt = (y) => depth(y) / 72;
+
+const DOCK_NEAR = 730;
+const DOCK_FAR = 572;
+const DOCK_AXIS = 0.14; // a little right of the vanishing point, so its left flank shows
+const DOCK_HALF = 0.19;
+export const DOCK = { x: onPlane(DOCK_AXIS, DOCK_FAR), y: DOCK_FAR + 2 };
 export const LAKE_CENTER = { x: 195, y: 560 };
 
 const GRAIN = `
@@ -64,13 +78,22 @@ const shaded = (d, fill, shade) => `<path d="${d}" fill="${fill}"/><path d="${d}
 const wrap = (inner, defs) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">
   <defs>${GRAIN}${blur('b-sky', 2.4)}${blur('b-far', 0.7)}${blur('b-near', 1.3)}${blur('b-fore', 4.5)}${defs}</defs>${inner}</svg>`;
 
-const CLOUDS = [
-  'M40 210a26 26 0 0 1 40-22 34 34 0 0 1 62 6 22 22 0 0 1 20 36H44a20 20 0 0 1-4-20z',
-  'M250 300a20 20 0 0 1 32-16 28 28 0 0 1 50 8 18 18 0 0 1 14 28h-92a16 16 0 0 1-4-20z',
-  'M282 118a14 14 0 0 1 22-10 20 20 0 0 1 36 6 12 12 0 0 1 8 20h-64a11 11 0 0 1-2-16z',
+// Clouds drift, so each one is its own little image (with its own grain and blur).
+export const CLOUDS = [
+  { d: 'M40 210a26 26 0 0 1 40-22 34 34 0 0 1 62 6 22 22 0 0 1 20 36H44a20 20 0 0 1-4-20z', box: [26, 160, 150, 86] },
+  { d: 'M250 300a20 20 0 0 1 32-16 28 28 0 0 1 50 8 18 18 0 0 1 14 28h-92a16 16 0 0 1-4-20z', box: [236, 268, 124, 66] },
+  { d: 'M282 118a14 14 0 0 1 22-10 20 20 0 0 1 36 6 12 12 0 0 1 8 20h-64a11 11 0 0 1-2-16z', box: [268, 92, 92, 50] },
 ];
 
-// Sky and clouds: behind the sun.
+export function cloudSVG(c, i) {
+  const { d, box } = CLOUDS[i];
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box.join(' ')}" width="${box[2]}" height="${box[3]}">
+    <defs>${GRAIN}${blur('b-sky', 2.4)}
+      <linearGradient id="cloudSh" x1="0" y1="0" x2="0" y2="1"><stop offset=".45" stop-color="${c.cloudShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.cloudShade}"/></linearGradient></defs>
+    <g filter="url(#b-sky)">${shaded(d, c.cloud, 'url(#cloudSh)')}</g></svg>`;
+}
+
+// Sky: behind the sun.
 export function backSVG(c) {
   const stars = c.stars ? Array.from({ length: 46 }, (_, i) => {
     const x = (i * 97 + 13) % W;
@@ -81,10 +104,9 @@ export function backSVG(c) {
     <rect width="${W}" height="${H}" fill="${c.skyMid}"/>
     <rect width="${W}" height="${H}" fill="url(#sky1)" filter="url(#grain)"/>
     <rect width="${W}" height="${H}" fill="url(#sky2)" filter="url(#grain)"/>
-    <g filter="url(#b-sky)">${stars}${CLOUDS.map((d) => shaded(d, c.cloud, 'url(#cloudSh)')).join('')}</g>`,
+    <g filter="url(#b-sky)">${stars}</g>`,
   `<linearGradient id="sky1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c.skyTop}"/><stop offset=".55" stop-color="${c.skyTop}" stop-opacity="0"/></linearGradient>
-   <radialGradient id="sky2" cx="55%" cy="56%" r="58%"><stop offset="0" stop-color="${c.skyLow}"/><stop offset="1" stop-color="${c.skyLow}" stop-opacity="0"/></radialGradient>
-   <linearGradient id="cloudSh" x1="0" y1="0" x2="0" y2="1"><stop offset=".45" stop-color="${c.cloudShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.cloudShade}"/></linearGradient>`);
+   <radialGradient id="sky2" cx="55%" cy="56%" r="58%"><stop offset="0" stop-color="${c.skyLow}"/><stop offset="1" stop-color="${c.skyLow}" stop-opacity="0"/></radialGradient>`);
 }
 
 function scallops(y, r, fill, off) {
@@ -96,27 +118,58 @@ function scallops(y, r, fill, off) {
 const LAKE = 'M0 500 C80 488 300 488 390 500 L390 640 L0 640Z';
 const SHORE = 'M0 640 C70 618 150 612 220 628 C290 644 340 630 390 618 L390 770 L0 770Z';
 
+// Your dock, drawn in perspective: its edges run toward the vanishing point,
+// planks are evenly spaced in depth (so they bunch up far away), posts shrink.
+function dock(c) {
+  const L = (y) => onPlane(DOCK_AXIS - DOCK_HALF, y);
+  const R = (y) => onPlane(DOCK_AXIS + DOCK_HALF, y);
+  const thick = (y) => 0.06 * depth(y);
+  const [n, f] = [DOCK_NEAR, DOCK_FAR];
+  const rowAt = (k) => HORIZON + 1 / (1 / depth(n) + (1 / depth(f) - 1 / depth(n)) * k);
+  const posts = [];
+  const planks = [];
+  for (let i = 0; i <= 8; i++) {
+    const y = rowAt(i / 8);
+    if (i > 0 && i < 8) planks.push(`<path d="M${L(y)} ${y}H${R(y)}" stroke="${c.woodShade}" stroke-width="${0.014 * depth(y)}" opacity=".55"/>`);
+    if (i % 2 === 0) {
+      const h = 0.13 * depth(y);
+      const w = 0.035 * depth(y);
+      for (const x of [L(y) + w / 2, R(y) - w / 2]) posts.push(`<rect x="${x - w / 2}" y="${y}" width="${w}" height="${thick(y) + h}" rx="${w / 3}" fill="${c.woodShade}"/>`);
+    }
+  }
+  const shadow = `M${L(f)} ${f + thick(f)} L${R(f)} ${f + thick(f)} L${R(n) + 14} ${n + thick(n) + 10} L${L(n) + 14} ${n + thick(n) + 10}Z`;
+  return {
+    under: `<path d="${shadow}" fill="${c.lakeShade}" opacity=".35"/>${posts.join('')}`,
+    top: `
+      <path d="M${L(n)} ${n} L${L(f)} ${f} L${L(f)} ${f + thick(f)} L${L(n)} ${n + thick(n)}Z" fill="${c.woodShade}"/>
+      <path d="M${L(n)} ${n} H${R(n)} V${n + thick(n)} H${L(n)}Z" fill="${c.woodShade}"/>
+      <path d="M${L(n)} ${n} L${R(n)} ${n} L${R(f)} ${f} L${L(f)} ${f}Z" fill="${c.wood}"/>
+      <path d="M${L(n)} ${n} L${R(n)} ${n} L${R(f)} ${f} L${L(f)} ${f}Z" fill="url(#deckSh)" filter="url(#grain)"/>
+      ${planks.join('')}`,
+  };
+}
+
 // Hills, lake, your shore and dock, the blurry foreground: in front of the sun.
 export function frontSVG(c) {
+  const pier = dock(c);
   const rings = [18, 40, 66, 96, 130, 168]
     .map((r) => `<ellipse cx="${LAKE_CENTER.x}" cy="${LAKE_CENTER.y}" rx="${r * 1.8}" ry="${r * 0.42}" opacity="${1 - r / 220}"/>`).join('');
-  const planks = Array.from({ length: 6 }, (_, i) => `<rect x="181" y="${598 + i * 8}" width="28" height="6" rx="2" fill="${c.wood}"/>`).join('');
   return wrap(`
     <g filter="url(#b-far)">${shaded('M0 470 C40 430 90 420 140 445 C190 470 220 430 270 420 C320 410 360 440 390 455 L390 520 L0 520Z', c.far, 'url(#farSh)')}</g>
     ${shaded('M0 515 C50 470 120 470 170 505 L170 540 L0 540Z', c.hill, 'url(#hillSh)')}
     ${shaded('M220 505 C270 455 340 450 390 480 L390 540 L220 540Z', c.hill, 'url(#hillSh)')}
     ${shaded(LAKE, c.lake, 'url(#lakeSh)')}
     <g clip-path="url(#lakeClip)" fill="none" stroke="${c.ripple}" stroke-width="3">${rings}</g>
-    <g>
-      <rect x="183" y="604" width="5" height="22" rx="2" fill="${c.woodShade}"/><rect x="202" y="604" width="5" height="22" rx="2" fill="${c.woodShade}"/>
-      ${planks}
-    </g>
+    ${pier.under}
     <g filter="url(#b-near)">${shaded(SHORE, c.sand, 'url(#sandSh)')}</g>
+    <g filter="url(#b-dock)">${pier.top}</g>
     <g filter="url(#b-fore)">${scallops(742, 30, c.scale, 0)}${scallops(782, 30, c.scale2, 30)}</g>`,
   `<linearGradient id="farSh" x1="0" y1="0" x2="1" y2="1"><stop offset=".3" stop-color="${c.farShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.farShade}"/></linearGradient>
    <linearGradient id="hillSh" x1="0" y1="0" x2=".6" y2="1"><stop offset=".25" stop-color="${c.hillShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.hillShade}"/></linearGradient>
    <linearGradient id="lakeSh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c.lakeShade}" stop-opacity=".9"/><stop offset=".5" stop-color="${c.lakeShade}" stop-opacity="0"/></linearGradient>
    <linearGradient id="sandSh" x1="0" y1="0" x2="0" y2="1"><stop offset=".2" stop-color="${c.sandShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.sandShade}"/></linearGradient>
+   <linearGradient id="deckSh" x1="0" y1="1" x2="0" y2="0"><stop offset=".35" stop-color="${c.woodShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.woodShade}" stop-opacity=".9"/></linearGradient>
+   ${blur('b-dock', 0.5)}
    <clipPath id="lakeClip"><path d="${LAKE}"/></clipPath>`);
 }
 
@@ -146,6 +199,7 @@ export function placeSVG(place, c) {
     default:
       return `<g transform="translate(${x} ${y - 22})">
         <rect x="-15" y="0" width="30" height="22" rx="4" fill="${c.wall}"/>
+        <rect x="7" y="-15" width="6" height="12" rx="1.5" fill="${c.roof}"/>
         <path d="M-20 3 L0 -16 L20 3Z" fill="${c.roof}" stroke="${c.roof}" stroke-width="5" stroke-linejoin="round"/>
         <rect x="-5" y="7" width="10" height="9" rx="2" fill="${c.light}"/></g>`;
   }

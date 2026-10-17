@@ -44,6 +44,25 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .sails { transform-box: fill-box; transform-origin: center; animation: turn 14s linear infinite; }
 @keyframes turn { to { transform: rotate(360deg); } }
 
+/* Life around the lake */
+.sway { transform-box: fill-box; transform-origin: 50% 100%; animation: sway 4.5s ease-in-out infinite alternate; }
+.reed { animation-duration: 3.1s; }
+@keyframes sway { from { transform: rotate(-2.2deg); } to { transform: rotate(2.2deg); } }
+.glint { opacity: 0; animation: glint 5s ease-in-out infinite; }
+@keyframes glint { 50% { opacity: .9; } }
+.duck .bob { transform-box: fill-box; transform-origin: 50% 100%; animation: paddle 2.4s ease-in-out infinite; }
+@keyframes paddle { 50% { transform: translateY(.8px) rotate(-2.5deg); } }
+.wing { transform-box: fill-box; transform-origin: center; animation: flap .42s ease-in-out infinite alternate; }
+@keyframes flap { to { transform: scaleY(-.55); } }
+.firefly { opacity: .2; animation: firefly 6s ease-in-out infinite; }
+@keyframes firefly { 50% { transform: translate(var(--dx), var(--dy)); opacity: 1; } }
+.smoke circle { transform-box: fill-box; transform-origin: center; opacity: 0; animation: puff 4s ease-out infinite; }
+@keyframes puff { 0% { opacity: 0; transform: scale(.5); } 20% { opacity: .75; } 100% { opacity: 0; transform: translate(9px, -36px) scale(2); } }
+.drift { animation: drift 46s ease-in-out infinite alternate; }
+@keyframes drift { to { transform: translateX(30px); } }
+.beam { transform-box: view-box; transform-origin: 0 0; animation: beam 7s ease-in-out infinite; }
+@keyframes beam { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(-1); } }
+
 .label text, #o-cloud text { font-family: var(--font); font-weight: 600; fill: var(--ink); }
 .label text { font-size: 14px; }
 #o-cloud { transition: opacity .4s; }

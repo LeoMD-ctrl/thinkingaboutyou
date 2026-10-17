@@ -9,11 +9,12 @@ Un petit lac au bord duquel tu vis. Les gens que tu aimes habitent sur l'autre r
 - **Voyager dans le temps** : fais glisser le ciel, le soleil avance et les jours défilent, avec le moment écrit dans un nuage (« demain soir »). Le paysage revient tout seul au présent.
 - **Une bougie = « je suis libre ».** Appui long sur ton ponton à un moment donné : une bougie s'allume. Les autres voient ta bougie quand ils voyagent jusqu'à ce moment.
 - **Deux bougies au même moment = une étoile** : c'est un moment ensemble, sans avoir à choisir entre s'appeler ou se voir. Les deux personnes sont prévenues, un rappel arrive un peu avant, et l'étoile attend au-dessus de sa maison ; la toucher fait voyager jusqu'au moment. Souffler sa bougie (nouvel appui long) annule.
+- **Le lac vit** : une cane et ses canetons qui nagent (touche-les : « coin ! »), une grenouille sur les nénuphars (elle saute de feuille en feuille), des poissons qui sautent, des oiseaux qui passent, des lucioles le soir, des arbres et des roseaux dans le vent, des reflets sur l'eau, des nuages qui dérivent, la cheminée qui fume quand quelqu'un a pensé à toi, le faisceau du phare la nuit. Toucher l'eau fait des ronds.
 - **Inviter** : un petit panneau « + » planté sur l'autre rive. Une seule phrase d'aide s'affiche, et seulement tant que tu n'as pas encore fait le geste.
 
 ## Direction artistique
 
-Inspirée de *Subpar Pool*, en plus onirique : aplats pastel, ombres en **grain d'aérographe** (un filtre SVG qui transforme un dégradé en nuage de points), écailles en premier plan, ondes concentriques sur le lac. Un léger **tilt-shift** donne l'effet maquette : le ciel et le premier plan sont flous, l'autre rive nette. Chaque moment de la journée est pré-rendu en image, et l'app fond de l'un à l'autre.
+Inspirée de *Subpar Pool*, en plus onirique : aplats pastel, ombres en **grain d'aérographe** (un filtre SVG qui transforme un dégradé en nuage de points), écailles en premier plan, ondes concentriques sur le lac. Un léger **tilt-shift** donne l'effet maquette : le ciel et le premier plan sont flous, l'autre rive nette. Tout ce qui est posé sur l'eau suit **un point de fuite unique** au milieu de l'horizon : le ponton se resserre en s'éloignant, ses planches se rapprochent, et canards, nénuphars ou reflets rapetissent avec la distance. Chaque moment de la journée est pré-rendu en image, et l'app fond de l'un à l'autre.
 
 ## La stack, et pourquoi
 
@@ -32,6 +33,7 @@ server.js          démarrage, clés VAPID, envoi des push (web-push)
 src/app.js         API + fichiers statiques + rappels
 src/store.js       mini base JSON (data/db.json), écritures atomiques
 public/            l'app : app.js (le lac, les gestes, le temps), scene.js (le paysage dessiné),
+                   life.js (animaux et animations),
                    style.css, sw.js (service worker), icônes
 test/              tests de l'API (node --test)
 ```
