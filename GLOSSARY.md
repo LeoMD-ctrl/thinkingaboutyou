@@ -44,8 +44,15 @@ _Avoid_: ping, cœur, message, notif
 La façon dont une pensée apparaît dans le monde : elle part vers le lieu du proche, ou flotte dans le ciel de celui qui la reçoit.
 _Avoid_: bulle
 
-## Les moments
+## Le signe
+
+**Signe**:
+Ce qui apparaît dans la carte quand deux proches se sont envoyé assez de pensées l'un à l'autre : le signe qu'ils se manquent tous les deux. Il s'efface si les pensées s'arrêtent.
+_Avoid_: chemin, match, manque partagé, étoile (quand on parle du concept)
 
 **Étoile**:
-Un moment ensemble entre deux proches. L'heure exacte et la forme (appel ou visite) se règlent hors de l'app : ce n'est pas un rendez-vous d'agenda.
-_Avoid_: rendez-vous, rdv, événement, moment calé
+L'apparence d'un signe la nuit, quelle que soit la carte : une étoile qui brille au-dessus du lieu du proche.
+_Avoid_: rendez-vous, moment
+
+**Arc-en-ciel**:
+L'apparence d'un signe le jour dans la campagne : un arc pastel qui part du point d'ancrage et se pose sur le lieu du proche.
