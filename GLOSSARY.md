@@ -26,8 +26,12 @@ _Avoid_: parrainage
 Le décor personnel qu'un compte choisit pour y voir ses proches (par exemple le jardin japonais, la montagne enneigée), avec sa faune et sa flore. Toutes les cartes partagent les mêmes gestes ; seul l'habillage change.
 _Avoid_: thème, niveau, scène, map
 
+**Point d'ancrage**:
+L'endroit de la carte où se trouve le compte lui-même, au premier plan (un ponton, un banc, un refuge…).
+_Avoid_: avatar, base, chez moi
+
 **Lieu**:
-L'endroit d'une carte où habite un proche (une maison, un phare, un moulin…).
+L'endroit d'une carte où habite un proche (une maison, un phare, un moulin…). Une carte compte six lieux.
 _Avoid_: maison (sauf pour ce lieu précis), slot, place
 
 ## Les gestes
@@ -41,6 +45,10 @@ La façon dont une pensée apparaît dans le monde : elle part vers le lieu du p
 _Avoid_: bulle
 
 ## Les moments
+
+**Chemin**:
+La lumière qui relie le point d'ancrage au lieu d'un proche quand les pensées sont allées dans les deux sens assez souvent : le signe que l'un et l'autre se manquent, et qu'il est temps de se trouver un moment.
+_Avoid_: pont, lien (réservé à la relation), match
 
 **Étoile**:
 Un moment ensemble entre deux proches. L'heure exacte et la forme (appel ou visite) se règlent hors de l'app : ce n'est pas un rendez-vous d'agenda.
