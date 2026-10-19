@@ -56,3 +56,7 @@ _Avoid_: rendez-vous, moment
 
 **Arc-en-ciel**:
 L'apparence d'un signe le jour dans la campagne : un arc pastel qui part du point d'ancrage et se pose sur le lieu du proche.
+
+**Mot doux**:
+Une pensée accompagnée d'un mot choisi parmi six (« courage ! », « belle journée »…), qu'on ne peut envoyer qu'en touchant un signe, une seule fois par signe. Il compte comme une pensée.
+_Avoid_: message, petit mot, signal
