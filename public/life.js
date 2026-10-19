@@ -1,14 +1,19 @@
-// Little lives around the lake: ducks, a frog, fish, birds, fireflies,
-// trees and reeds in the wind, glints on the water. Some can be touched.
+// Little lives in the countryside: ducks, a frog, fish, birds, fireflies, sheep,
+// butterflies, a cat asleep on the dock, a cherry tree losing its petals, a field
+// of flowers, trees and reeds in the wind, glints on the water. Most can be touched.
 
-import { PHASES, scaleAt, glowSprite } from './scene.js';
+import { PHASES, scaleAt, onPlane, glowSprite } from './scene.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (n) => Array.from({ length: n }, (_, i) => i);
 
 // [x, y, scale]: trees get smaller as they sit higher on the hills (further away).
-const TREES = [[28, 505, 0.9], [146, 501, 0.62], [166, 463, 0.36], [184, 465, 0.34], [232, 441, 0.38], [282, 479, 0.68], [372, 474, 0.78], [356, 446, 0.4]];
+const TREES = [[142, 506, 0.6], [262, 484, 0.62], [190, 458, 0.34], [252, 440, 0.36], [345, 447, 0.36]];
+const SHEEP_HOMES = [[58, 694], [104, 708], [146, 686]];
+const CAT = { x: onPlane(0.14, 652), y: 652 };
+const FLOWER_COLORS = ['#FFD1DC', '#FFF3B0', '#D9C8FF', '#FFFFFF', '#FFC8A2'];
+const hash = (i, k) => Math.abs(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1;
 const PADS = [[66, 606], [104, 597], [40, 594]];
 const DUCK_Y = 548;
 
@@ -50,6 +55,8 @@ export function createLife({ back, water, front, ripple, say }) {
   let nextFish = performance.now() + rand(4000, 9000);
   let nextBirds = performance.now() + rand(3000, 8000);
   const birds = [];
+  const sheep = SHEEP_HOMES.map(([x, y], i) => ({ home: x, x, y, dir: i % 2 ? -1 : 1, t: i * 4000 }));
+  const flies = [0, 1, 2].map((i) => ({ hx: [60, 300, 140][i], hy: [650, 668, 640][i], t: i * 3000, a: 0.0007 + i * 0.0002, b: 0.0013 + i * 0.0003, x: 0, y: 0 }));
 
   // The duck family: a mother and three ducklings following her.
   const ducks = [
@@ -119,6 +126,55 @@ export function createLife({ back, water, front, ripple, say }) {
       <image href="${glowSprite('#FFE58A', 48)}" x="-10" y="-10" width="20" height="20"/><circle r="1.6" fill="#FFF3B0"/></g></g>`;
   }).join('');
 
+  const night = () => phase === 'night';
+
+  const flowers = () => pick(70).map((i) => {
+    const y = 652 + hash(i, 1) * 84;
+    const left = hash(i, 2) < 0.68;
+    const x = left ? 6 + hash(i, 3) * 160 : 272 + hash(i, 3) * 56;
+    const s = scaleAt(y) * 0.55;
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${(1.8 * s).toFixed(2)}" fill="${FLOWER_COLORS[i % FLOWER_COLORS.length]}" opacity="${night() ? 0.45 : 0.95}"/>`;
+  }).join('');
+
+  const cherry = () => {
+    const [p1, p2] = night() ? ['#8E6E9E', '#7A5C8C'] : ['#F7C6D5', '#EEA7BF'];
+    const petals = pick(9).map((i) => `<ellipse class="petal" cx="${-30 + i * 8}" cy="${-70 + (i % 3) * 10}" rx="2.4" ry="1.5" fill="${p1}" style="animation-delay:-${i * 1.1}s;animation-duration:${6 + (i % 4)}s"/>`).join('');
+    return `<g transform="translate(350 744) scale(1.5)">
+      <path d="M-4 0 Q-1 -24 -6 -46 M-3 -30 Q8 -38 12 -50" stroke="${c.woodShade}" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <g class="sway" style="animation-duration:6s"><circle cx="-18" cy="-56" r="18" fill="${p2}"/><circle cx="10" cy="-62" r="20" fill="${p2}"/><circle cx="-4" cy="-76" r="17" fill="${p1}"/><circle cx="20" cy="-48" r="12" fill="${p1}"/></g>
+      ${petals}</g>`;
+  };
+
+  const sheepMarkup = (sh, i) => {
+    const wool = night() ? '#B9B2D0' : '#FFF8EE';
+    const face = '#3E3A48';
+    return `<g class="sheep" data-sheep="${i}"><g class="flip"><g class="hop">
+      <rect x="-8" y="-2" width="2.6" height="7" rx="1" fill="${face}"/><rect x="4" y="-2" width="2.6" height="7" rx="1" fill="${face}"/>
+      <circle cx="-7" cy="-7" r="6" fill="${wool}"/><circle cx="0" cy="-9" r="7" fill="${wool}"/><circle cx="7" cy="-7" r="6" fill="${wool}"/><circle cx="0" cy="-4" r="7" fill="${wool}"/>
+      <g class="graze" style="animation-delay:-${i * 2.3}s"><ellipse cx="12" cy="-6" rx="4" ry="5" fill="${face}"/><ellipse cx="9" cy="-9" rx="2.6" ry="1.4" fill="${face}"/><circle cx="13" cy="-7" r=".9" fill="#FFF8EE"/></g>
+    </g></g><circle cy="-6" r="15" fill-opacity="0" pointer-events="all"/></g>`;
+  };
+
+  const flyMarkup = (f, i) => {
+    const col = ['#F7B7D0', '#C9B8F5', '#FFE08A'][i];
+    return `<g class="butterfly" data-butterfly="${i}"><g class="wings"><path d="M0 0 C-7 -9 -11 -2 -6 2 C-9 6 -3 8 0 2Z" fill="${col}"/><path d="M0 0 C7 -9 11 -2 6 2 C9 6 3 8 0 2Z" fill="${col}"/></g>
+      <rect x="-.7" y="-3" width="1.4" height="6" rx=".7" fill="#4E4470"/><circle r="12" fill-opacity="0" pointer-events="all"/></g>`;
+  };
+
+  const catMarkup = () => {
+    const fur = night() ? '#9C86A8' : '#F2C9A0';
+    const dark = night() ? '#7A6690' : '#DDA477';
+    const s = scaleAt(CAT.y) * 0.5;
+    return `<g class="cat" data-cat transform="translate(${CAT.x.toFixed(1)} ${CAT.y}) scale(${s.toFixed(3)})">
+      <g class="breathe"><path d="M10 0 Q22 -2 18 -9" stroke="${dark}" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+      <ellipse cx="2" cy="-5" rx="13" ry="7" fill="${fur}"/><path d="M-2 -11 Q3 -13 8 -10" stroke="${dark}" stroke-width="1.6" fill="none" stroke-linecap="round"/></g>
+      <g class="cat-head"><circle cx="-10" cy="-7" r="6" fill="${fur}"/><path d="M-15 -10 L-14 -16 L-11 -12Z M-9 -12 L-6 -16 L-5.5 -10Z" fill="${fur}"/>
+      <path d="M-13 -7 q1.4 1.2 2.8 0 M-9 -7 q1.4 1.2 2.8 0" stroke="#4E4470" stroke-width=".9" fill="none" stroke-linecap="round"/></g>
+      <circle cx="-2" cy="-6" r="16" fill-opacity="0" pointer-events="all"/></g>`;
+  };
+
+  let sheepEls = [];
+  let flyEls = [];
   let duckEls = [];
   let fishLayer;
   let birdLayer;
@@ -130,9 +186,16 @@ export function createLife({ back, water, front, ripple, say }) {
     fishLayer = frag(water, '');
     const duckLayer = frag(water, phase === 'night' ? '' : ducks.map(duckMarkup).join(''));
     duckEls = [...duckLayer.querySelectorAll('.duck')];
-    front.innerHTML = `${reeds(18, 668, 1.35, false)}${reeds(372, 654, 1.2, true)}${phase === 'night' || phase === 'dusk' ? fireflies() : ''}`;
+    front.innerHTML = `${reeds(18, 668, 1.35, false)}${reeds(372, 654, 1.2, true)}${cherry()}
+      <g class="herd">${sheep.map(sheepMarkup).join('')}</g><g>${flowers()}</g>${catMarkup()}
+      <g class="flies">${phase === 'night' || phase === 'dusk' ? '' : flies.map(flyMarkup).join('')}</g>
+      ${phase === 'night' || phase === 'dusk' ? fireflies() : ''}`;
+    sheepEls = [...front.querySelectorAll('.sheep')];
+    flyEls = [...front.querySelectorAll('.butterfly')];
     birds.length = 0;
     placeDucks();
+    moveSheep(0);
+    moveFlies(0);
   }
 
   function placeDucks() {
@@ -157,6 +220,34 @@ export function createLife({ back, water, front, ripple, say }) {
       kid.x += step;
     });
     placeDucks();
+  }
+
+  // Sheep graze, wander a little around their spot, and turn back.
+  function moveSheep(dt) {
+    sheep.forEach((sh, i) => {
+      sh.t += dt;
+      if (!night()) {
+        sh.x += sh.dir * 0.0025 * dt;
+        if (Math.abs(sh.x - sh.home) > 14) sh.dir = sh.x > sh.home ? -1 : 1;
+      }
+      const el = sheepEls[i];
+      if (!el) return;
+      const s = scaleAt(sh.y) * 0.55;
+      el.setAttribute('transform', `translate(${sh.x.toFixed(1)} ${sh.y}) scale(${s.toFixed(3)})`);
+      el.firstElementChild.setAttribute('transform', `scale(${sh.dir} 1)`);
+    });
+  }
+
+  // Butterflies wander over the meadow along lazy loops.
+  function moveFlies(dt) {
+    flies.forEach((f, i) => {
+      f.t += dt;
+      f.x = f.hx + Math.sin(f.t * f.a) * 40 + Math.sin(f.t * f.a * 2.7) * 12;
+      f.y = f.hy + Math.sin(f.t * f.b) * 14 - (f.lift || 0);
+      if (f.lift) f.lift = Math.max(0, f.lift - dt * 0.03);
+      const el = flyEls[i];
+      if (el) el.setAttribute('transform', `translate(${f.x.toFixed(1)} ${f.y.toFixed(1)}) scale(${(scaleAt(f.y) * 0.45).toFixed(3)})`);
+    });
   }
 
   function spawnBirds() {
@@ -232,10 +323,30 @@ export function createLife({ back, water, front, ripple, say }) {
     d.dir = -d.dir;
   }
 
+  function bleat(i) {
+    const sh = sheep[i];
+    sheepEls[i]?.querySelector('.hop').animate(
+      [{ transform: 'none' }, { transform: 'translateY(-7px)' }, { transform: 'none' }],
+      { duration: 380, easing: 'ease-out' },
+    );
+    say(sh.x, sh.y - 40, 'bêê');
+    sh.dir = -sh.dir;
+  }
+
+  function meow() {
+    front.querySelector('.cat-head')?.animate(
+      [{ transform: 'none' }, { transform: 'translate(-1px, -5px) rotate(-12deg)' }, { transform: 'translate(-1px, -5px) rotate(-12deg)' }, { transform: 'none' }],
+      { duration: 1400, easing: 'ease-in-out' },
+    );
+    say(CAT.x, CAT.y - 34, night() ? 'mrrr…' : 'miaou');
+  }
+
   function tick(now) {
     const dt = Math.min(64, now - last);
     last = now;
     if (phase && phase !== 'night') moveDucks(dt);
+    moveSheep(dt);
+    moveFlies(dt);
     moveBirds(dt);
     if (now > nextFish) {
       jumpFish();
@@ -260,6 +371,11 @@ export function createLife({ back, water, front, ripple, say }) {
       const duck = target.closest('[data-duck]');
       if (duck) { quack(Number(duck.dataset.duck)); return true; }
       if (target.closest('[data-frog]')) { frogJump(); return true; }
+      const sh = target.closest('[data-sheep]');
+      if (sh) { bleat(Number(sh.dataset.sheep)); return true; }
+      if (target.closest('[data-cat]')) { meow(); return true; }
+      const fly = target.closest('[data-butterfly]');
+      if (fly) { flies[Number(fly.dataset.butterfly)].lift = 60; return true; }
       return false;
     },
     start() {

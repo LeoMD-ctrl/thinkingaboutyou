@@ -7,17 +7,15 @@ import { Store } from './store.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-// Moments are soft parts of a day, not clock times.
-const BANDS = {
-  matin: { word: 'matin', start: 9 * 60, end: 12 * 60 },
-  midi: { word: 'midi', start: 12 * 60, end: 14 * 60 },
-  aprem: { word: 'après-midi', start: 14 * 60 + 30, end: 18 * 60 },
-  soir: { word: 'soir', start: 19 * 60, end: 22 * 60 },
-};
-const SLOT_RE = /^(\d{4}-\d{2}-\d{2}):(matin|midi|aprem|soir)$/;
-const REMIND_BEFORE_MS = 30 * 60 * 1000;
-const MAX_CANDLES = 40;
 const WEEK_MS = 7 * 86400000;
+const DAY_MS = 86400000;
+
+// The decors one can live in. Every map shares the same gestures.
+export const MAPS = ['campagne', 'jardin', 'ocean', 'montagne'];
+// A sign appears when each one has sent at least this many thoughts to the other over the last week.
+export const SIGN_THRESHOLD = 3;
+// The only words a mot doux can carry.
+export const WORDS = ['courage !', 'belle journée', "je t'embrasse", 'tu me manques', "j'ai hâte de te voir", 'douce nuit'];
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -32,33 +30,6 @@ const TYPES = {
 const id = () => crypto.randomBytes(9).toString('base64url');
 const code = () => Array.from(crypto.randomBytes(6), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 const pairKey = (a, b) => [a, b].sort().join(':');
-
-// "2026-10-18:soir" → "dimanche soir"
-export function slotWords(slot) {
-  const [, date, band] = slot.match(SLOT_RE);
-  const day = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
-  return `${day} ${BANDS[band].word}`;
-}
-
-// Wall-clock time in a time zone → real instant.
-function zonedTime(date, minutes, tz) {
-  const [y, m, d] = date.split('-').map(Number);
-  const guess = Date.UTC(y, m - 1, d, Math.floor(minutes / 60), minutes % 60);
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).formatToParts(guess).map((p) => [p.type, p.value]));
-  const seen = Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour, +parts.minute);
-  return new Date(guess - (seen - guess));
-}
-
-function slotStart(slot, tz) {
-  const [, date, band] = slot.match(SLOT_RE);
-  return zonedTime(date, BANDS[band].start, tz);
-}
-
-function yesterday() {
-  return new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-}
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -81,8 +52,6 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
   // ---------- helpers ----------
 
   const publicUser = (u) => ({ id: u.id, name: u.name });
-  const keep = () => yesterday();
-  const candlesOf = (u) => (u.free || []).filter((s) => s.slice(0, 10) >= keep());
 
   async function notify(user, { title, body, tag, url = '/', unread = true }) {
     if (unread) user.unread = (user.unread || 0) + 1;
@@ -102,31 +71,41 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     }));
   }
 
-  function momentFor(m, me) {
-    const other = db.users[m.from === me.id ? m.to : m.from];
-    return { id: m.id, slot: m.slot, at: m.at, with: other ? publicUser(other) : null };
+  const thoughts = (from, to, since) => db.pings.filter((p) => p.from === from && p.to === to && p.at > since);
+
+  // The sign between two people: alive while both keep thinking of each other.
+  // Each appearance is an episode; a mot doux can be sent once per episode.
+  function signOf(a, b, now = Date.now()) {
+    const key = pairKey(a, b);
+    const since = now - WEEK_MS;
+    const alive = thoughts(a, b, since).length >= SIGN_THRESHOLD && thoughts(b, a, since).length >= SIGN_THRESHOLD;
+    if (alive && !db.signs[key]) {
+      db.signs[key] = { since: now, sent: {} };
+      store.save();
+    } else if (!alive && db.signs[key]) {
+      delete db.signs[key];
+      store.save();
+    }
+    return db.signs[key] || null;
   }
 
   function snapshot(me) {
     const now = Date.now();
-    const since = now - WEEK_MS;
-    const people = store.peopleOf(me.id).map((p) => {
-      const between = (from, to) => db.pings.filter((x) => x.from === from && x.to === to && x.at > since).map((x) => x.at);
+    const people = store.peopleOf(me.id).map(({ user: p, place }) => {
+      const sign = signOf(me.id, p.id, now);
       return {
         ...publicUser(p),
-        pingsFromThem: between(p.id, me.id),
-        pingsFromMe: between(me.id, p.id),
-        candles: candlesOf(p),
+        place,
+        pingsFromThem: thoughts(p.id, me.id, now - WEEK_MS).map((x) => x.at),
+        pingsFromMe: thoughts(me.id, p.id, now - WEEK_MS).map((x) => x.at),
+        mots: thoughts(p.id, me.id, now - DAY_MS).filter((x) => x.word).map((x) => ({ at: x.at, word: x.word })),
+        sign: sign ? { since: sign.since, sent: Boolean(sign.sent[me.id]) } : null,
       };
     });
-    const moments = Object.values(db.moments)
-      .filter((m) => (m.from === me.id || m.to === me.id) && m.status === 'confirmed' && new Date(m.at).getTime() > now - 3 * 3600000)
-      .map((m) => momentFor(m, me))
-      .sort((a, b) => new Date(a.at) - new Date(b.at));
     return {
-      me: { ...publicUser(me), code: me.code, seenAt: me.seenAt || 0, hasPush: (me.subs || []).length > 0, candles: candlesOf(me) },
+      me: { ...publicUser(me), code: me.code, map: me.map || MAPS[0], seenAt: me.seenAt || 0, hasPush: (me.subs || []).length > 0 },
       people,
-      moments,
+      words: WORDS,
     };
   }
 
@@ -149,6 +128,8 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     return n;
   }
 
+  const cleanMap = (m) => (MAPS.includes(m) ? m : MAPS[0]);
+
   function validTz(tz) {
     try {
       new Intl.DateTimeFormat('fr-FR', { timeZone: tz });
@@ -159,11 +140,12 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
   }
 
   async function connect(me, inviter) {
-    if (!inviter || inviter.id === me.id) return false;
-    if (!store.link(me.id, inviter.id)) return false;
+    if (!inviter || inviter.id === me.id) return;
+    const result = store.link(me.id, inviter.id);
+    if (result === 'full') throw new HttpError(409, 'Il n’y a plus de place sur l’une de vos cartes');
+    if (result !== 'linked') return;
     store.save();
-    await notify(inviter, { title: me.name, body: "vient d'arriver de l'autre côté du lac 🏡", tag: `join-${me.id}` });
-    return true;
+    await notify(inviter, { title: me.name, body: "vient d'arriver près de chez toi 🏡", tag: `join-${me.id}` });
   }
 
   // ---------- routes ----------
@@ -182,13 +164,13 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
   route('POST', /^\/api\/users$/, async (req, _, body) => {
     const user = {
       id: id(), token: crypto.randomBytes(24).toString('base64url'), code: code(),
-      name: cleanName(body.name), tz: validTz(body.tz), free: [],
+      name: cleanName(body.name), map: cleanMap(body.map), tz: validTz(body.tz),
       subs: [], unread: 0, seenAt: Date.now(), createdAt: Date.now(),
     };
     while (store.userByCode(user.code)) user.code = code();
     db.users[user.id] = user;
     store.save();
-    await connect(user, store.userByCode(body.invite));
+    await connect(user, store.userByCode(body.invite)).catch(() => {});
     return { token: user.token, ...snapshot(user) };
   });
 
@@ -197,6 +179,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
   route('PATCH', /^\/api\/me$/, (req, _, body) => {
     const me = requireUser(req);
     if (body.name !== undefined) me.name = cleanName(body.name);
+    if (body.map !== undefined) me.map = cleanMap(body.map);
     if (body.tz !== undefined) me.tz = validTz(body.tz);
     store.save();
     return snapshot(me);
@@ -232,108 +215,48 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     return snapshot(me);
   });
 
+  // Letting someone go: quietly, nobody is told.
+  route('POST', /^\/api\/unlink$/, (req, _, body) => {
+    const me = requireUser(req);
+    const other = requirePerson(me, body.id);
+    store.unlink(me.id, other.id);
+    delete db.signs[pairKey(me.id, other.id)];
+    store.save();
+    return snapshot(me);
+  });
+
   route('POST', /^\/api\/pings$/, async (req, _, body) => {
     const me = requireUser(req);
     const to = requirePerson(me, body.to);
     const now = Date.now();
     const last = db.pings.findLast((p) => p.from === me.id && p.to === to.id);
     // Ignore accidental double taps.
-    if (last && now - last.at < 2000) return { ok: true };
+    if (last && now - last.at < 2000) return snapshot(me);
     db.pings.push({ from: me.id, to: to.id, at: now });
     if (db.pings.length > 5000) db.pings.splice(0, db.pings.length - 5000);
-    const recent = db.pings.filter((p) => p.from === me.id && p.to === to.id && now - p.at < 12 * 3600000).length;
+    const recent = thoughts(me.id, to.id, now - 12 * 3600000).length;
     await notify(to, {
       title: me.name,
       body: recent > 1 ? `pense encore à toi 💗 ×${recent}` : 'pense à toi 💗',
       tag: `ping-${me.id}`,
     });
-    return { ok: true };
-  });
-
-  // Candles: "I am free then". Two candles at the same moment become a star — a moment together.
-  route('PUT', /^\/api\/candles$/, async (req, _, body) => {
-    const me = requireUser(req);
-    if (!Array.isArray(body.slots)) throw new HttpError(400, 'Bougies invalides');
-    const before = candlesOf(me);
-    me.free = [...new Set(body.slots.filter((x) => typeof x === 'string' && SLOT_RE.test(x) && x.slice(0, 10) >= keep()))]
-      .sort()
-      .slice(0, MAX_CANDLES);
-    const lit = me.free.filter((x) => !before.includes(x));
-    const blown = before.filter((x) => !me.free.includes(x));
-    store.save();
-
-    const pair = (a, b) => pairKey(a, b);
-    const confirmed = () => Object.values(db.moments).filter((m) => m.status === 'confirmed');
-
-    // Blowing out a candle lets go of the stars it made.
-    for (const m of confirmed().filter((x) => blown.includes(x.slot) && (x.from === me.id || x.to === me.id))) {
-      m.status = 'cancelled';
-      const other = db.users[m.from === me.id ? m.to : m.from];
-      if (other) await notify(other, { title: me.name, body: `ne peut plus ${slotWords(m.slot)}. Sa bougie s'est éteinte 🕯️`, tag: `moment-${m.id}` });
-    }
-
-    let starred = false;
-    for (const p of store.peopleOf(me.id)) {
-      for (const slot of lit.filter((x) => candlesOf(p).includes(x))) {
-        if (confirmed().some((m) => m.slot === slot && pair(m.from, m.to) === pair(me.id, p.id))) continue;
-        const m = { id: id(), from: me.id, to: p.id, slot, at: slotStart(slot, me.tz).toISOString(), status: 'confirmed', createdAt: Date.now() };
-        db.moments[m.id] = m;
-        starred = true;
-        store.save();
-        await notify(p, { title: me.name, body: `Une étoile pour ${slotWords(slot)} ✨ Vous vous retrouvez.`, tag: `moment-${m.id}` });
-      }
-    }
-
-    // Lighting a lonely candle gently lets the others know — once a day at most.
-    if (lit.length && !starred && Date.now() - (me.candleNoticeAt || 0) > 20 * 3600000) {
-      me.candleNoticeAt = Date.now();
-      store.save();
-      for (const p of store.peopleOf(me.id)) {
-        await notify(p, { title: me.name, body: `a allumé une bougie pour ${slotWords(lit[0])} 🕯️`, tag: `candle-${me.id}`, url: `/?t=${encodeURIComponent(lit[0])}` });
-      }
-    }
     return snapshot(me);
   });
 
-  route('GET', /^\/api\/moments\/([\w-]+)\.ics$/, (req, [mid], _, res, url) => {
-    const m = db.moments[mid];
-    if (!m || m.status !== 'confirmed') throw new HttpError(404, 'Moment introuvable');
-    const viewer = url.searchParams.get('for');
-    const other = db.users[viewer === m.from ? m.to : m.from];
-    const band = BANDS[m.slot.match(SLOT_RE)[2]];
-    const stamp = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-    const start = new Date(m.at);
-    const end = new Date(start.getTime() + (band.end - band.start) * 60000);
-    const title = `✨ ${other?.name ?? ''}`.replace(/[,;\\\r\n]/g, ' ');
-    const ics = [
-      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Pense a toi//FR', 'BEGIN:VEVENT',
-      `UID:${m.id}@pense-a-toi`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`,
-      `SUMMARY:${title}`, 'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', `DESCRIPTION:${title}`, 'END:VALARM',
-      'END:VEVENT', 'END:VCALENDAR', '',
-    ].join('\r\n');
-    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': 'inline; filename="moment.ics"' });
-    res.end(ics);
-    return undefined;
+  // A mot doux: a thought carrying one of a few words, sent once per sign.
+  route('POST', /^\/api\/mots$/, async (req, _, body) => {
+    const me = requireUser(req);
+    const to = requirePerson(me, body.to);
+    if (!WORDS.includes(body.word)) throw new HttpError(400, 'Ce mot-là n’existe pas');
+    const sign = signOf(me.id, to.id);
+    if (!sign) throw new HttpError(409, 'Il n’y a pas de signe entre vous pour le moment');
+    if (sign.sent[me.id]) throw new HttpError(409, 'Ton mot doux est déjà parti');
+    sign.sent[me.id] = body.word;
+    db.pings.push({ from: me.id, to: to.id, at: Date.now(), word: body.word });
+    store.save();
+    await notify(to, { title: me.name, body: `pense à toi · ${body.word}`, tag: `mot-${me.id}` });
+    return snapshot(me);
   });
-
-  // ---------- reminders ----------
-
-  async function sendReminders(now = Date.now()) {
-    for (const m of Object.values(db.moments)) {
-      if (m.status !== 'confirmed' || m.reminded) continue;
-      const t = new Date(m.at).getTime();
-      if (t - now > REMIND_BEFORE_MS || t < now) continue;
-      m.reminded = true;
-      store.save();
-      for (const [uid, otherId] of [[m.from, m.to], [m.to, m.from]]) {
-        const user = db.users[uid];
-        const other = db.users[otherId];
-        if (!user || !other) continue;
-        const body = `Ton moment avec ${other.name}, c'est bientôt ✨`;
-        await notify(user, { title: 'Pense à toi', body, tag: `remind-${m.id}`, unread: false });
-      }
-    }
-  }
 
   // ---------- http ----------
 
@@ -369,7 +292,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     const manifest = {
       name: 'Pense à toi',
       short_name: 'Pense à toi',
-      description: 'Un petit lac, des lanternes : dire « je pense à toi » et se retrouver.',
+      description: 'Un petit monde où dire « je pense à toi » à ceux qu’on aime.',
       start_url: start,
       scope: '/',
       display: 'standalone',
@@ -425,12 +348,7 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     }
   });
 
-  const reminderTimer = setInterval(() => sendReminders().catch(console.error), 60 * 1000);
-  reminderTimer.unref();
-  server.on('close', () => {
-    clearInterval(reminderTimer);
-    store.flush();
-  });
+  server.on('close', () => store.flush());
 
-  return { server, store, sendReminders };
+  return { server, store };
 }

@@ -1,5 +1,5 @@
 // Service worker: shows the little hearts, keeps the app shell for offline launches.
-const CACHE = 'pense-a-toi-v4';
+const CACHE = 'pense-a-toi-v5';
 const SHELL = ['/', '/style.css', '/app.js', '/scene.js', '/life.js', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {

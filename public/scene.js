@@ -10,38 +10,41 @@ export const PHASES = {
     skyTop: '#9FC1EC', skyMid: '#FAD2CF', skyLow: '#FFE7B5', sun: '#FFF7DC', sunHalo: '#FFE3AE',
     cloud: '#FFF8F1', cloudShade: '#F1BFCB', far: '#B9C2EE', farShade: '#8D98D8',
     hill: '#A9DEC0', hillShade: '#74BD9A', lake: '#98CFE4', lakeShade: '#64A6C8', ripple: '#CFEDF6',
-    sand: '#F9D3AE', sandShade: '#E6A783', wood: '#D6A07C', woodShade: '#A9714F',
+    meadow: '#BFE3B0', meadowShade: '#86C38A', barn: '#F3B4A9', cart: '#F7D98F', wood: '#D6A07C', woodShade: '#A9714F',
     scale: '#3E6679', scale2: '#30576B', wall: '#FFF6EE', roof: '#3E6679', light: '#FFD36E', lit: 0.45, stars: false,
   },
   day: {
     skyTop: '#86BDEE', skyMid: '#C6E3F5', skyLow: '#FFF0CF', sun: '#FFFBEA', sunHalo: '#FFF0BF',
     cloud: '#FFFFFF', cloudShade: '#C3D3F0', far: '#AFC3EC', farShade: '#7F9AD3',
     hill: '#A5DDB4', hillShade: '#6CBD8C', lake: '#84C9E4', lakeShade: '#4C9EC4', ripple: '#CBF0F8',
-    sand: '#F8D9AE', sandShade: '#E1AC7D', wood: '#D7A27C', woodShade: '#A6704E',
+    meadow: '#B5E2A3', meadowShade: '#79BE7E', barn: '#F4B1A4', cart: '#F8DA8E', wood: '#D7A27C', woodShade: '#A6704E',
     scale: '#3A6B76', scale2: '#2D5B66', wall: '#FFFFFF', roof: '#3A6B76', light: '#FFD36E', lit: 0.3, stars: false,
   },
   dusk: {
     skyTop: '#A99BE6', skyMid: '#F4BFD0', skyLow: '#FFD9A8', sun: '#FFF1C6', sunHalo: '#FFE2A0',
     cloud: '#FFF3EA', cloudShade: '#E8B9CF', far: '#B9A9E8', farShade: '#8F7FD0',
     hill: '#9FD6C0', hillShade: '#6DB59C', lake: '#8EC6DD', lakeShade: '#5E9FC0', ripple: '#BFE3EF',
-    sand: '#F7C7A2', sandShade: '#E39C7A', wood: '#C98F6E', woodShade: '#9A6249',
+    meadow: '#A9D5A2', meadowShade: '#76AE86', barn: '#E8A2A6', cart: '#EFC68E', wood: '#C98F6E', woodShade: '#9A6249',
     scale: '#355A6E', scale2: '#2A4A5E', wall: '#FFF3EA', roof: '#355A6E', light: '#FFD36E', lit: 0.85, stars: false,
   },
   night: {
     skyTop: '#2E2F63', skyMid: '#5B4F8E', skyLow: '#B987B8', sun: '#FFF4D6', sunHalo: '#C9B8F0',
     cloud: '#7E74B4', cloudShade: '#4E4689', far: '#4A4A8A', farShade: '#33336B',
     hill: '#3F6E78', hillShade: '#2B4F5B', lake: '#3E5C8E', lakeShade: '#2A4170', ripple: '#6F8FC4',
-    sand: '#8A6E9E', sandShade: '#5E4A78', wood: '#6E5584', woodShade: '#4A3962',
+    meadow: '#4E7069', meadowShade: '#36524F', barn: '#7E6A9A', cart: '#8F80A8', wood: '#6E5584', woodShade: '#4A3962',
     scale: '#1E2E45', scale2: '#162236', wall: '#9C93C8', roof: '#1E2E45', light: '#FFD36E', lit: 1, stars: true,
   },
 };
 
-// Where the people you love live, on the far shore. `window` is where their light shines.
+// The countryside: where the people you love live, from the nearest hill to the farthest.
+// (x, y) is where the place stands, s its size (smaller when farther away).
 export const PLACES = [
-  { type: 'maison', the: 'la maison', x: 318, y: 468, window: [318, 457], chimney: [328, 430] },
-  { type: 'phare', the: 'le phare', x: 58, y: 470, window: [58, 410] },
-  { type: 'moulin', the: 'le moulin', x: 100, y: 490, window: [100, 474] },
-  { type: 'cabane', the: 'la cabane', x: 250, y: 494, window: [250, 485] },
+  { type: 'maison', the: 'la maison', x: 318, y: 468, s: 1 },
+  { type: 'moulin', the: 'le moulin', x: 100, y: 490, s: 1 },
+  { type: 'ferme', the: 'la ferme', x: 216, y: 476, s: 0.8 },
+  { type: 'roulotte', the: 'la roulotte', x: 366, y: 488, s: 0.9 },
+  { type: 'cabane', the: 'la cabane dans l’arbre', x: 34, y: 494, s: 1 },
+  { type: 'pigeonnier', the: 'le pigeonnier', x: 160, y: 466, s: 0.7 },
 ];
 
 // One vanishing point in the middle of the horizon: everything lying on the
@@ -161,13 +164,13 @@ export function frontSVG(c) {
     ${shaded(LAKE, c.lake, 'url(#lakeSh)')}
     <g clip-path="url(#lakeClip)" fill="none" stroke="${c.ripple}" stroke-width="3">${rings}</g>
     ${pier.under}
-    <g filter="url(#b-near)">${shaded(SHORE, c.sand, 'url(#sandSh)')}</g>
+    <g filter="url(#b-near)">${shaded(SHORE, c.meadow, 'url(#meadowSh)')}</g>
     <g filter="url(#b-dock)">${pier.top}</g>
     <g filter="url(#b-fore)">${scallops(742, 30, c.scale, 0)}${scallops(782, 30, c.scale2, 30)}</g>`,
   `<linearGradient id="farSh" x1="0" y1="0" x2="1" y2="1"><stop offset=".3" stop-color="${c.farShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.farShade}"/></linearGradient>
    <linearGradient id="hillSh" x1="0" y1="0" x2=".6" y2="1"><stop offset=".25" stop-color="${c.hillShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.hillShade}"/></linearGradient>
    <linearGradient id="lakeSh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c.lakeShade}" stop-opacity=".9"/><stop offset=".5" stop-color="${c.lakeShade}" stop-opacity="0"/></linearGradient>
-   <linearGradient id="sandSh" x1="0" y1="0" x2="0" y2="1"><stop offset=".2" stop-color="${c.sandShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.sandShade}"/></linearGradient>
+   <linearGradient id="meadowSh" x1="0" y1="0" x2="0" y2="1"><stop offset=".2" stop-color="${c.meadowShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.meadowShade}"/></linearGradient>
    <linearGradient id="deckSh" x1="0" y1="1" x2="0" y2="0"><stop offset=".35" stop-color="${c.woodShade}" stop-opacity="0"/><stop offset="1" stop-color="${c.woodShade}" stop-opacity=".9"/></linearGradient>
    ${blur('b-dock', 0.5)}
    <clipPath id="lakeClip"><path d="${LAKE}"/></clipPath>`);
@@ -175,39 +178,80 @@ export function frontSVG(c) {
 
 // ---------- Places (drawn live, crisp, in the focus band) ----------
 
+// Each home is drawn around its base (0, 0) at size 1. `win` is where its light shines,
+// `smoke` where its chimney is, both in the same local units.
+const HOMES = {
+  maison: (c) => ({
+    win: [0, -11], smoke: [10, -38],
+    svg: `<rect x="-15" y="-22" width="30" height="22" rx="4" fill="${c.wall}"/>
+      <rect x="7" y="-37" width="6" height="12" rx="1.5" fill="${c.roof}"/>
+      <path d="M-20 -19 L0 -38 L20 -19Z" fill="${c.roof}" stroke="${c.roof}" stroke-width="5" stroke-linejoin="round"/>
+      <rect x="-5" y="-15" width="10" height="9" rx="2" fill="${c.light}"/>`,
+  }),
+  moulin: (c) => ({
+    win: [0, -15],
+    svg: `<path d="M-11 0 L-8 -26 L8 -26 L11 0Z" fill="${c.wall}"/>
+      <path d="M-10 -26 Q0 -38 10 -26Z" fill="${c.roof}"/>
+      <rect x="-3.5" y="-19" width="7" height="8" rx="2" fill="${c.light}"/>
+      <g class="sails"><path d="M0 -30 L-4 -56 L4 -56Z M0 -30 L26 -34 L26 -26Z M0 -30 L4 -4 L-4 -4Z M0 -30 L-26 -26 L-26 -34Z" fill="${c.cloudShade}" opacity=".95"/></g>
+      <circle cx="0" cy="-30" r="2.6" fill="${c.roof}"/>`,
+  }),
+  ferme: (c) => ({
+    win: [0, -27],
+    svg: `<rect x="17" y="-30" width="11" height="30" rx="5.5" fill="${c.wall}"/><path d="M17 -29 Q22.5 -38 28 -29Z" fill="${c.roof}"/>
+      <path d="M-22 0 V-22 L-12 -32 H12 L22 -22 V0Z" fill="${c.barn}"/>
+      <path d="M-25 -21 L-12 -35 H12 L25 -21" fill="none" stroke="${c.roof}" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+      <rect x="-7" y="-14" width="14" height="14" rx="1.5" fill="${c.wall}"/><path d="M-7 -14 L7 0 M7 -14 L-7 0" stroke="${c.barn}" stroke-width="1.6"/>
+      <circle cx="0" cy="-24" r="3.4" fill="${c.light}"/>`,
+  }),
+  roulotte: (c) => ({
+    win: [-2, -16], smoke: [10, -32],
+    svg: `<rect x="8.5" y="-31" width="3" height="8" rx="1" fill="${c.roof}"/>
+      <path d="M-17 -6 V-20 Q-17 -29 0 -29 Q17 -29 17 -20 V-6Z" fill="${c.cart}"/>
+      <path d="M-19 -21 Q0 -34 19 -21" fill="none" stroke="${c.roof}" stroke-width="3.6" stroke-linecap="round"/>
+      <rect x="-7" y="-20" width="10" height="8" rx="4" fill="${c.light}"/>
+      <path d="M17 -9 L26 -4" stroke="${c.woodShade}" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="-9" cy="-4" r="4.6" fill="none" stroke="${c.woodShade}" stroke-width="2.2"/><circle cx="9" cy="-4" r="4.6" fill="none" stroke="${c.woodShade}" stroke-width="2.2"/>`,
+  }),
+  cabane: (c) => ({
+    win: [1, -38],
+    svg: `<path d="M-4 0 Q-2 -30 -3 -60 L4 -60 Q3 -30 5 0Z" fill="${c.woodShade}"/>
+      <circle cx="-14" cy="-62" r="15" fill="${c.hillShade}"/><circle cx="12" cy="-66" r="16" fill="${c.hillShade}"/><circle cx="0" cy="-76" r="14" fill="${c.hill}"/>
+      <path d="M-11 -30 V-44 L1 -53 L13 -44 V-30Z" fill="${c.wood}"/>
+      <path d="M-14 -43 L1 -56 L16 -43" fill="none" stroke="${c.roof}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="-3" y="-42" width="8" height="7" rx="2" fill="${c.light}"/>
+      <path d="M-13 -30 H15" stroke="${c.woodShade}" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M-8 -30 V-6 M-4 -30 V-6 M-8 -24 H-4 M-8 -18 H-4 M-8 -12 H-4" stroke="${c.woodShade}" stroke-width="1.3"/>`,
+  }),
+  pigeonnier: (c) => ({
+    win: [0, -20],
+    svg: `<rect x="-10" y="-30" width="20" height="30" rx="3" fill="${c.wall}"/>
+      <path d="M-14 -28 L0 -46 L14 -28Z" fill="${c.roof}" stroke="${c.roof}" stroke-width="3" stroke-linejoin="round"/>
+      <circle cx="0" cy="-49" r="2.4" fill="${c.roof}"/>
+      <rect x="-3.6" y="-24" width="7.2" height="8" rx="3.6" fill="${c.light}"/>
+      <path d="M-6 -11 H6" stroke="${c.wood}" stroke-width="2" stroke-linecap="round"/>
+      <path d="M-2 -50 q2 -4 5 -2 q2 1 3 0 l-1 3 q-4 2 -7 -1z" fill="${c.cloud}"/>`,
+  }),
+};
+
+const home = (place, c) => HOMES[place.type](c);
+// Where a place's light and smoke are, on the screen.
+export function windowOf(place, c = PHASES.day) {
+  const [dx, dy] = home(place, c).win;
+  return [place.x + dx * place.s, place.y + dy * place.s];
+}
+export function smokeOf(place, c = PHASES.day) {
+  const h = home(place, c);
+  return h.smoke ? [place.x + h.smoke[0] * place.s, place.y + h.smoke[1] * place.s] : null;
+}
+
 export function placeSVG(place, c) {
-  const { x, y } = place;
-  switch (place.type) {
-    case 'phare':
-      return `<g transform="translate(${x} ${y - 70})">
-        <path d="M-9 70 L-6 14 L6 14 L9 70Z" fill="${c.wall}"/>
-        <path d="M-7.6 40 L7.6 40 L8.2 50 L-8.2 50Z M-6.6 22 L6.6 22 L7 30 L-7 30Z" fill="${c.sandShade}"/>
-        <rect x="-7" y="6" width="14" height="9" rx="2" fill="${c.light}"/>
-        <path d="M-9 6 Q0 -6 9 6Z" fill="${c.roof}"/></g>`;
-    case 'moulin':
-      return `<g transform="translate(${x} ${y})">
-        <path d="M-11 0 L-8 -26 L8 -26 L11 0Z" fill="${c.wall}"/>
-        <path d="M-10 -26 Q0 -38 10 -26Z" fill="${c.roof}"/>
-        <rect x="-3.5" y="-19" width="7" height="8" rx="2" fill="${c.light}"/>
-        <g class="sails"><path d="M0 -30 L-4 -56 L4 -56Z M0 -30 L26 -34 L26 -26Z M0 -30 L4 -4 L-4 -4Z M0 -30 L-26 -26 L-26 -34Z" fill="${c.cloudShade}" opacity=".95"/></g>
-        <circle cx="0" cy="-30" r="2.6" fill="${c.roof}"/></g>`;
-    case 'cabane':
-      return `<g transform="translate(${x} ${y})">
-        <path d="M-15 0 L-15 -14 L0 -27 L15 -14 L15 0Z" fill="${c.wood}"/>
-        <path d="M-19 -12 L0 -30 L19 -12" fill="none" stroke="${c.roof}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-        <rect x="-4.5" y="-13" width="9" height="8" rx="2" fill="${c.light}"/></g>`;
-    default:
-      return `<g transform="translate(${x} ${y - 22})">
-        <rect x="-15" y="0" width="30" height="22" rx="4" fill="${c.wall}"/>
-        <rect x="7" y="-15" width="6" height="12" rx="1.5" fill="${c.roof}"/>
-        <path d="M-20 3 L0 -16 L20 3Z" fill="${c.roof}" stroke="${c.roof}" stroke-width="5" stroke-linejoin="round"/>
-        <rect x="-5" y="7" width="10" height="9" rx="2" fill="${c.light}"/></g>`;
-  }
+  return `<g transform="translate(${place.x} ${place.y}) scale(${place.s})">${home(place, c).svg}</g>`;
 }
 
 // An empty spot waiting for someone: a little sign planted in the grass.
 export function plotSVG(place, c) {
-  return `<g transform="translate(${place.x} ${place.y})">
+  return `<g transform="translate(${place.x} ${place.y}) scale(${place.s})">
     <rect x="-1.8" y="-22" width="3.6" height="22" rx="1.5" fill="${c.woodShade}"/>
     <rect x="-13" y="-30" width="26" height="15" rx="4" fill="${c.wood}"/>
     <path d="M0 -26.5v8M-4 -22.5h8" stroke="${c.wall}" stroke-width="2.4" stroke-linecap="round"/></g>`;

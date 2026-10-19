@@ -1,8 +1,8 @@
-// Pense à toi — a little lake. The people you love live on the far shore.
-// Touch their home to send a lantern; slide the sky to travel in time;
-// hold your dock to light a candle ("I'm free then"). Two candles make a star.
+// Pense à toi — a little world. The people you love live in the places around you.
+// Touch someone's home to send them a thought. When you both keep thinking of each
+// other, a sign appears (a star by night, a rainbow by day): touch it to send a mot doux.
 
-import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, CLOUDS, backSVG, frontSVG, cloudSVG, placeSVG, plotSVG, glowSprite } from './scene.js';
+import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, CLOUDS, backSVG, frontSVG, cloudSVG, placeSVG, plotSVG, windowOf, smokeOf, glowSprite } from './scene.js';
 import { createLife } from './life.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -16,21 +16,24 @@ const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window &&
 
 const params = new URLSearchParams(location.search);
 let invite = (params.get('invite') || '').toUpperCase() || null;
-let travelTo = params.get('t');
 
-const HOURS_PER_SCREEN = 10;
-const MAX_OFFSET = 7 * 24 - 1;
-const LANTERN_TINTS = ['#FFD36E', '#FFB98A', '#FFC2D4', '#D8C8FF'];
+const LANTERN_TINTS = ['#FFD36E', '#FFB98A', '#FFC2D4', '#D8C8FF', '#B9E6C9', '#FFE3A8'];
+const GOLD = '#FFC94A';
+const MAPS = [
+  { key: 'campagne', name: 'Campagne luxuriante', ready: true },
+  { key: 'jardin', name: 'Jardin japonais' },
+  { key: 'ocean', name: 'Phare et océan' },
+  { key: 'montagne', name: 'Montagne enneigée' },
+];
 
 const state = {
   token: load('token'),
   data: null,
   inviter: null,
-  offset: 0, // hours travelled into the future
   phase: null,
-  slot: undefined,
-  arriving: new Set(), // ping timestamps currently flying in
-  known: null, // ping timestamps already shown
+  arriving: new Set(), // timestamps of thoughts currently flying in
+  known: null, // timestamps of thoughts already shown
+  words: null, // the mot doux picker, when open
   config: null,
 };
 let life = null;
@@ -62,61 +65,15 @@ async function api(path, { method = 'GET', body } = {}) {
 // What the world shows: your data, or a preview before you have an account.
 function world() {
   if (state.data) return state.data;
-  return { me: { candles: [] }, people: state.inviter ? [{ ...state.inviter, pingsFromThem: [], pingsFromMe: [], candles: [] }] : [], moments: [] };
+  const people = state.inviter ? [{ ...state.inviter, place: 0, pingsFromThem: [], pingsFromMe: [], mots: [], sign: null }] : [];
+  return { me: {}, people, words: [] };
 }
 
-// ---------- Time ----------
+// ---------- Time of day ----------
 
-const BANDS = [
-  { key: 'matin', word: 'matin', from: 6, to: 12, start: 9 },
-  { key: 'midi', word: 'midi', from: 12, to: 14.25, start: 12 },
-  { key: 'aprem', word: 'après-midi', from: 14.25, to: 18.5, start: 14.5 },
-  { key: 'soir', word: 'soir', from: 18.5, to: 23, start: 19 },
-];
-const pad = (n) => String(n).padStart(2, '0');
-const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const hourOf = (d) => d.getHours() + d.getMinutes() / 60;
-const viewTime = () => new Date(Date.now() + state.offset * 3600000);
+const isNight = () => state.phase === 'dusk' || state.phase === 'night';
 
-function slotAt(d) {
-  const h = hourOf(d);
-  const band = BANDS.find((b) => h >= b.from && h < b.to);
-  return band ? `${dateKey(d)}:${band.key}` : null;
-}
-
-function slotStart(slot) {
-  const [date, key] = slot.split(':');
-  const [y, m, d] = date.split('-').map(Number);
-  const band = BANDS.find((b) => b.key === key);
-  return new Date(y, m - 1, d, Math.floor(band.start), (band.start % 1) * 60);
-}
-
-function dayWord(d) {
-  const n = Math.round((new Date(d).setHours(12, 0, 0, 0) - new Date().setHours(12, 0, 0, 0)) / 86400000);
-  if (n === 0) return "aujourd'hui";
-  if (n === 1) return 'demain';
-  return new Date(d).toLocaleDateString('fr-FR', { weekday: 'long' });
-}
-
-function slotWords(slot) {
-  const d = slotStart(slot);
-  const band = BANDS.find((b) => b.key === slot.split(':')[1]);
-  const day = dayWord(d);
-  if (day === "aujourd'hui") return `${band.key === 'aprem' ? 'cet' : 'ce'} ${band.word}`;
-  return `${day} ${band.word}`;
-}
-
-function timeWords(d) {
-  const slot = slotAt(d);
-  if (slot) return slotWords(slot);
-  const h = hourOf(d);
-  const night = new Date(d);
-  if (h < 6) night.setDate(night.getDate() - 1);
-  const day = dayWord(night);
-  return day === "aujourd'hui" ? 'cette nuit' : `${day}, la nuit`;
-}
-
-// Phase blend across the day.
 const KEYS = [[0, 'night'], [5, 'night'], [7, 'morning'], [10.5, 'day'], [16.5, 'day'], [19, 'dusk'], [21.5, 'night'], [24, 'night']];
 function blendAt(h) {
   for (let i = 0; i < KEYS.length - 1; i++) {
@@ -150,15 +107,13 @@ function buildWorld() {
         <g id="clouds">${CLOUDS.map(({ box: [x, y, w, h] }, i) => `<image class="drift" style="animation-delay:-${i * 17}s" x="${x}" y="${y}" width="${w}" height="${h}"/>`).join('')}</g></svg>
       <div class="layers">${phases.map((p) => `<img alt="" data-front="${p}" src="${layerUrl('front', p)}">`).join('')}</div>
       ${svgOpen('overlay')}
-        <g id="o-reflect"></g><g id="o-back"></g><g id="o-static"></g><g id="o-water"></g><g id="o-front"></g><g id="o-fx"></g>
-        <g id="o-cloud" opacity="0"><path d="M112 116a26 26 0 0 1 38-22 34 34 0 0 1 62 0 30 30 0 0 1 54 12 22 22 0 0 1 12 36H118a22 22 0 0 1-6-26z" fill="#FFF8F1" opacity=".92"/><text x="${W / 2}" y="129" text-anchor="middle"></text></g>
+        <g id="o-reflect"></g><g id="o-back"></g><g id="o-static"></g><g id="o-water"></g><g id="o-front"></g><g id="o-fx"></g><g id="o-words"></g>
       </svg>
       <div class="hint"></div>
       <div class="top"></div>
     </div>
     <div class="card-root"></div>`;
   state.phase = null;
-  state.slot = undefined;
   life?.stop();
   life = createLife({
     back: $('#o-back', app),
@@ -173,16 +128,13 @@ function buildWorld() {
 }
 
 function applyTime() {
-  const overlay = $('.overlay', app);
-  if (!overlay) return;
-  const t = viewTime();
-  const h = hourOf(t);
+  if (!$('.overlay', app)) return;
+  const h = hourOf(new Date());
   const { from, to, k } = blendAt(h);
   for (const kind of ['back', 'front']) {
     app.querySelectorAll(`[data-${kind}]`).forEach((img) => {
       const p = img.dataset[kind];
-      const on = p === from ? 1 : p === to ? k : 0;
-      img.style.opacity = on;
+      img.style.opacity = p === from ? 1 : p === to ? k : 0;
       img.style.zIndex = p === to ? 2 : p === from ? 1 : 0;
     });
   }
@@ -198,8 +150,6 @@ function applyTime() {
   const edge = (u) => Math.max(0, Math.min(1, u * 10, (1 - u) * 10));
   const sunVis = edge(sunT);
   const moonVis = edge(moonT) * (1 - 0.6 * sunVis);
-  const sunUp = sunVis > 0;
-  const moonUp = moonVis > 0;
   const sunG = $('#sun', app);
   const moonG = $('#moon', app);
   if (dominant !== state.phase) {
@@ -211,105 +161,123 @@ function applyTime() {
   moonG.setAttribute('transform', `translate(${moon.x} ${moon.y})`);
   moonG.style.opacity = moonVis;
 
-  // Its reflection on the lake when low on the horizon.
-  const body = sunUp ? sun : moon;
+  // Its reflection on the water when low on the horizon.
+  const body = sunVis > 0 ? sun : moon;
   const low = Math.max(0, 1 - (480 - body.y) / 160);
-  $('#o-reflect', app).innerHTML = (sunUp || moonUp) && low > 0.05
-    ? `<g stroke="${sunUp ? c.sun : '#FFF4D6'}" stroke-width="4" fill="none" opacity="${0.75 * low}">
+  $('#o-reflect', app).innerHTML = (sunVis > 0 || moonVis > 0) && low > 0.05
+    ? `<g stroke="${sunVis > 0 ? c.sun : '#FFF4D6'}" stroke-width="4" fill="none" opacity="${0.75 * low}">
          <ellipse cx="${body.x}" cy="512" rx="58" ry="5"/><ellipse cx="${body.x}" cy="526" rx="34" ry="3"/><ellipse cx="${body.x}" cy="538" rx="16" ry="2"/></g>`
     : '';
 
-  // The day written in a cloud while you travel.
-  const cloud = $('#o-cloud', app);
-  cloud.style.opacity = state.offset > 0.3 ? 1 : 0;
-  $('text', cloud).textContent = timeWords(t);
-
-  const slot = slotAt(t);
   if (dominant !== state.phase) {
+    state.phase = dominant;
     app.querySelectorAll('#clouds image').forEach((img, i) => img.setAttribute('href', layerUrl('cloud', dominant, i)));
     life.setPhase(dominant);
-  }
-  if (dominant !== state.phase || slot !== state.slot) {
-    state.phase = dominant;
-    state.slot = slot;
     drawStatic();
   }
 }
 
-// Places, lights, candles, stars and lanterns.
+const PLACE_OF = (p) => PLACES[p.place] || PLACES[0];
+
+// Homes, lights, signs and lanterns.
 function drawStatic() {
   const g = $('#o-static', app);
   if (!g) return;
   const c = PHASES[state.phase || 'day'];
-  const { me, people, moments } = world();
-  const slot = state.slot;
-  const traveling = state.offset > 0.3;
+  const { people } = world();
   let out = '';
 
+  // Signs go first, so the homes sit on top of where the rainbows land.
+  for (const p of people) {
+    if (p.sign) out += signSVG(p);
+  }
+
   // Homes of the people you love. Their window glows warmer the more they thought of you.
-  people.slice(0, PLACES.length).forEach((p, i) => {
-    const place = PLACES[i];
-    const warmth = Math.min(1, (p.pingsFromThem || []).reduce((s, t) => s + 0.5 ** ((Date.now() - t) / (8 * 3600000)), 0) / 2);
+  for (const p of people) {
+    const place = PLACE_OF(p);
+    const s = place.s;
+    const warmth = Math.min(1, (p.pingsFromThem || []).reduce((sum, t) => sum + 0.5 ** ((Date.now() - t) / (8 * 3600000)), 0) / 2);
     const glow = Math.min(1, c.lit * 0.5 + warmth * 0.8);
-    const [wx, wy] = place.window;
-    out += `<image class="window-glow" data-glow="${i}" href="${glowSprite(c.light, 120)}" x="${wx - 34}" y="${wy - 34}" width="68" height="68" opacity="${glow}"/>`;
-    if (place.chimney && warmth > 0.1) {
-      const [cx, cy] = place.chimney;
-      out += `<g class="smoke" opacity="${0.5 + warmth / 2}">${[0, 1, 2].map((k) => `<circle cx="${cx}" cy="${cy}" r="3.4" fill="${c.cloud}" style="animation-delay:${k * 1.3}s"/>`).join('')}</g>`;
-    }
-    if (place.type === 'phare' && (state.phase === 'dusk' || state.phase === 'night')) {
-      out += `<g transform="translate(${wx} ${wy})"><path class="beam" d="M0 0 L150 -15 L150 15Z" fill="${c.light}" opacity=".2"/></g>`;
+    const [wx, wy] = windowOf(place, c);
+    out += `<g class="home" data-home="${p.id}">`;
+    out += `<image class="window-glow" data-glow="${p.id}" href="${glowSprite(c.light, 120)}" x="${wx - 34 * s}" y="${wy - 34 * s}" width="${68 * s}" height="${68 * s}" opacity="${glow}"/>`;
+    const chimney = smokeOf(place, c);
+    if (chimney && warmth > 0.1) {
+      const [cx, cy] = chimney;
+      out += `<g class="smoke" opacity="${0.5 + warmth / 2}">${[0, 1, 2].map((k) => `<circle cx="${cx}" cy="${cy}" r="${3.4 * s}" fill="${c.cloud}" style="animation-delay:${k * 1.3}s"/>`).join('')}</g>`;
     }
     out += placeSVG(place, c);
-    out += `<rect data-place="${i}" x="${place.x - 30}" y="${place.y - 78}" width="60" height="88" fill-opacity="0" pointer-events="all"/>`;
-  });
-  if (people.length < PLACES.length && state.data) {
-    const place = PLACES[people.length];
+    out += `<rect data-place="${p.id}" x="${place.x - 30 * s}" y="${place.y - 82 * s}" width="${60 * s}" height="${92 * s}" fill-opacity="0" pointer-events="all"/></g>`;
+  }
+
+  // An empty spot, waiting for someone.
+  const taken = new Set(people.map((p) => p.place));
+  const free = PLACES.findIndex((_, i) => !taken.has(i));
+  if (free >= 0 && state.data) {
+    const place = PLACES[free];
     out += plotSVG(place, c);
-    out += `<rect data-plot x="${place.x - 26}" y="${place.y - 48}" width="52" height="56" fill-opacity="0" pointer-events="all"/>`;
+    out += `<rect data-plot x="${place.x - 26 * place.s}" y="${place.y - 48 * place.s}" width="${52 * place.s}" height="${56 * place.s}" fill-opacity="0" pointer-events="all"/>`;
   }
 
-  // Candles at the moment you are looking at.
-  if (slot) {
-    if (me.candles.includes(slot)) out += candleSVG(DOCK.x, DOCK.y - 2, 1, 'mine');
-    people.slice(0, PLACES.length).forEach((p, i) => {
-      if ((p.candles || []).includes(slot)) out += candleSVG(PLACES[i].x + 18, PLACES[i].y + 2, 0.6);
+  // Mots doux received: big golden lanterns above the sender's home.
+  people.forEach((p) => {
+    const place = PLACE_OF(p);
+    (p.mots || []).filter((m) => !state.arriving.has(m.at)).forEach((m, k) => {
+      out += lanternSVG(place.x + (k % 2 ? 16 : -16) * place.s, place.y - (112 + k * 16) * place.s, GOLD, p.id, m.at, 1.4, `data-mot="${esc(m.word)}"`);
     });
-  }
+  });
 
-  // Stars: moments together. The one you are looking at shines big above the lake;
-  // upcoming ones wait small above their home, touch them to travel there.
-  for (const m of moments) {
-    const i = people.findIndex((p) => p.id === m.with?.id);
-    if (i < 0 || i >= PLACES.length) continue;
-    if (m.slot === slot) {
-      out += starSVG((DOCK.x + PLACES[i].x) / 2, 370, 1.4, m.slot);
-    } else if (!traveling && slotStart(m.slot) > Date.now() - 3 * 3600000) {
-      out += starSVG(PLACES[i].x, PLACES[i].y - 112, 0.7, m.slot);
-    }
-  }
-
-  // Lanterns: thoughts received in the last day, floating in your sky.
-  if (!traveling) {
-    people.forEach((p, i) => {
-      (p.pingsFromThem || []).filter((t) => Date.now() - t < 86400000 && !state.arriving.has(t)).slice(-6).forEach((t) => {
-        const { x, y } = lanternSpot(t);
-        out += lanternSVG(x, y, LANTERN_TINTS[i % LANTERN_TINTS.length], p.id, t);
-      });
+  // Plain thoughts received in the last day float in your sky.
+  people.forEach((p, i) => {
+    const words = new Set((p.mots || []).map((m) => m.at));
+    (p.pingsFromThem || []).filter((t) => Date.now() - t < 86400000 && !words.has(t) && !state.arriving.has(t)).slice(-6).forEach((t) => {
+      const { x, y } = lanternSpot(t);
+      out += lanternSVG(x, y, LANTERN_TINTS[i % LANTERN_TINTS.length], p.id, t);
     });
-  }
+  });
   g.innerHTML = out;
   updateHint();
+}
+
+// The sign between you and someone: a star by night, a rainbow by day.
+function signPoint(p) {
+  const place = PLACE_OF(p);
+  if (isNight()) return { x: place.x, y: place.y - 96 * place.s };
+  const [wx] = windowOf(place);
+  return { x: (DOCK.x + wx) / 2, y: Math.min(DOCK.y, place.y) - 150 };
+}
+
+function signSVG(p) {
+  const place = PLACE_OF(p);
+  const dim = p.sign.sent ? 0.7 : 1;
+  if (isNight()) {
+    const { x, y } = signPoint(p);
+    return `<g class="star" data-sign="${p.id}" transform="translate(${x} ${y})" opacity="${dim}">
+      <image href="${glowSprite('#FFF1B8', 140)}" x="-38" y="-38" width="76" height="76"/>
+      <path d="M0 -13 C2 -4 4 -2 13 0 C4 2 2 4 0 13 C-2 4 -4 2 -13 0 C-4 -2 -2 -4 0 -13Z" fill="#FFF8DA"/>
+      <circle r="26" fill-opacity="0" pointer-events="all"/></g>`;
+  }
+  const [x2, y2] = [place.x, place.y - 6 * place.s];
+  const [x1, y1] = [DOCK.x, DOCK.y - 4];
+  const top = signPoint(p);
+  const bands = ['#F7B3C2', '#FFD3A8', '#FFF1B0', '#CDEFC2', '#B8D6FF', '#D6C4FF'];
+  const arcs = bands.map((col, i) => {
+    const o = (i - 2.5) * 4.6;
+    const cy = 2 * top.y - (y1 + y2) / 2 + o * 2;
+    return `<path d="M${x1 + o} ${y1} Q${top.x} ${cy} ${x2 + o * 0.4} ${y2}" stroke="${col}" stroke-width="5" fill="none" stroke-linecap="round"/>`;
+  }).join('');
+  const hit = `<path d="M${x1} ${y1} Q${top.x} ${2 * top.y - (y1 + y2) / 2} ${x2} ${y2}" stroke="#000" stroke-opacity="0" stroke-width="44" fill="none" pointer-events="stroke"/>`;
+  return `<g class="rainbow" data-sign="${p.id}" opacity="${0.8 * dim}">${arcs}${hit}</g>`;
 }
 
 function lanternSpot(t) {
   const r1 = Math.abs(Math.sin(t * 12.9898) * 43758.5453) % 1;
   const r2 = Math.abs(Math.sin(t * 78.233) * 12345.678) % 1;
-  return { x: 40 + r1 * 310, y: 170 + r2 * 220 };
+  return { x: 40 + r1 * 310, y: 170 + r2 * 210 };
 }
 
-function lanternSVG(x, y, tint, pid, t, scale = 1) {
-  return `<g class="lantern" data-lantern="${pid}" data-x="${x}" data-y="${y}" transform="translate(${x} ${y}) scale(${scale})">
+function lanternSVG(x, y, tint, pid, t, scale = 1, extra = '') {
+  return `<g class="lantern" data-lantern="${pid}" data-x="${x}" data-y="${y}" ${extra} transform="translate(${x} ${y}) scale(${scale})">
     <g class="bob" style="animation-delay:-${(t % 4000) / 1000}s">
       <image href="${glowSprite(tint, 120)}" x="-28" y="-28" width="56" height="56"/>
       <ellipse rx="7" ry="9" fill="${tint}"/>
@@ -318,27 +286,13 @@ function lanternSVG(x, y, tint, pid, t, scale = 1) {
     </g></g>`;
 }
 
-function candleSVG(x, y, s = 1, cls = '') {
-  return `<g class="candle ${cls}" transform="translate(${x} ${y}) scale(${s})">
-    <image href="${glowSprite('#FFD36E', 120)}" x="-30" y="-44" width="60" height="60" opacity=".9"/>
-    <rect x="-4" y="-14" width="8" height="14" rx="2.5" fill="#FFF6EA"/>
-    <path class="flame" d="M0 -26c3 4 4 6 4 8a4 4 0 0 1-8 0c0-2 1-4 4-8z" fill="#FFB547"/></g>`;
-}
-
-function starSVG(x, y, s, slot) {
-  return `<g class="star" data-star="${slot}" transform="translate(${x} ${y}) scale(${s})">
-    <image href="${glowSprite('#FFF1B8', 140)}" x="-40" y="-40" width="80" height="80"/>
-    <path d="M0 -14 C2 -4 4 -2 14 0 C4 2 2 4 0 14 C-2 4 -4 2 -14 0 C-4 -2 -2 -4 0 -14Z" fill="#FFF8DA"/>
-    <circle r="24" fill-opacity="0" pointer-events="all"/></g>`;
-}
-
 // ---------- Little animations ----------
 
 const fx = () => $('#o-fx', app);
-function el(markup) {
+function el(markup, parent = fx()) {
   const g = document.createElementNS(NS, 'g');
   g.innerHTML = markup;
-  fx().appendChild(g);
+  parent.appendChild(g);
   return g;
 }
 const ease = (u) => (u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2);
@@ -356,10 +310,10 @@ function animate(duration, step) {
   });
 }
 
-function label(x, y, text) {
+function label(x, y, text, ms = 2200) {
   const w = text.length * 7.6 + 26;
-  const g = el(`<g class="label" transform="translate(${x} ${y})"><rect x="${-w / 2}" y="-15" width="${w}" height="28" rx="14" fill="#FFF8F1" opacity=".94"/><text y="4" text-anchor="middle">${esc(text)}</text></g>`);
-  setTimeout(() => g.remove(), 2200);
+  const g = el(`<g class="label" style="animation-duration:${ms}ms" transform="translate(${x} ${y})"><rect x="${-w / 2}" y="-15" width="${w}" height="28" rx="14" fill="#FFF8F1" opacity=".94"/><text y="4" text-anchor="middle">${esc(text)}</text></g>`);
+  setTimeout(() => g.remove(), ms);
 }
 
 function ripples(x, y, size = 1) {
@@ -388,145 +342,136 @@ function flyLantern(from, to, tint, s0, s1, duration = 1500) {
   }).then(() => g.remove());
 }
 
-function flash(i) {
-  const glow = $(`[data-glow="${i}"]`, app);
+function flash(pid) {
+  const glow = $(`[data-glow="${pid}"]`, app);
   if (!glow) return;
   const base = Number(glow.getAttribute('opacity'));
-  const [x, y] = [Number(glow.getAttribute('x')), Number(glow.getAttribute('y'))];
+  const [x, y, w] = ['x', 'y', 'width'].map((a) => Number(glow.getAttribute(a)));
   animate(1200, (u) => {
     const k = Math.sin(Math.PI * u);
     glow.setAttribute('opacity', Math.min(1, base + k));
-    glow.setAttribute('width', 68 + 50 * k);
-    glow.setAttribute('height', 68 + 50 * k);
-    glow.setAttribute('x', x - 25 * k);
-    glow.setAttribute('y', y - 25 * k);
+    glow.setAttribute('width', w * (1 + 0.7 * k));
+    glow.setAttribute('height', w * (1 + 0.7 * k));
+    glow.setAttribute('x', x - w * 0.35 * k);
+    glow.setAttribute('y', y - w * 0.35 * k);
   });
 }
 
-async function sendThought(i) {
-  const p = world().people[i];
+async function sendThought(pid) {
+  const p = world().people.find((x) => x.id === pid);
   if (!p || !state.data) return;
-  const place = PLACES[i];
-  label(place.x, place.y - 96, p.name);
+  const place = PLACE_OF(p);
+  label(place.x, place.y - 96 * place.s, p.name);
   save('pinged', '1');
-  api('/api/pings', { method: 'POST', body: { to: p.id } }).catch(() => {});
+  const sending = api('/api/pings', { method: 'POST', body: { to: p.id } }).catch(() => null);
   ripples(DOCK.x, DOCK.y + 10);
-  const [wx, wy] = place.window;
-  await flyLantern({ x: DOCK.x, y: DOCK.y - 20 }, { x: wx, y: wy }, '#FFD36E', 1.1, 0.35);
-  flash(i);
+  const [wx, wy] = windowOf(place);
+  await flyLantern({ x: DOCK.x, y: DOCK.y - 20 }, { x: wx, y: wy }, '#FFD36E', 1.1, 0.35 * place.s + 0.1);
+  flash(p.id);
   ripples((DOCK.x + place.x) / 2, LAKE_CENTER.y - 30);
-  p.pingsFromMe.push(Date.now());
+  const data = await sending;
+  if (data) {
+    const hadSign = Boolean(p.sign);
+    setData(data);
+    const now = data.people.find((x) => x.id === pid);
+    if (!hadSign && now?.sign) {
+      // A sign is born: let it appear gently.
+      drawStatic();
+      const sign = $(`[data-sign="${pid}"]`, app);
+      sign?.animate([{ opacity: 0 }, { opacity: sign.getAttribute('opacity') }], { duration: 1800, easing: 'ease-out' });
+    }
+  }
   updateHint();
 }
 
-// Thoughts that arrived while you were away rise from their home into your sky.
+// Thoughts that arrived while you were away rise from their home.
 async function receiveNew() {
   if (!state.data) return;
   const fresh = [];
   state.data.people.forEach((p, i) => {
-    for (const t of p.pingsFromThem) if (!state.known.has(t)) fresh.push({ t, i });
+    const words = new Map((p.mots || []).map((m) => [m.at, m.word]));
+    for (const t of p.pingsFromThem) if (!state.known.has(t)) fresh.push({ t, p, i, word: words.get(t) });
   });
   fresh.forEach(({ t }) => { state.known.add(t); state.arriving.add(t); });
   if (!fresh.length) return;
   drawStatic();
-  for (const { t, i } of fresh.slice(-6)) {
-    if (i >= PLACES.length) { state.arriving.delete(t); continue; }
-    const [wx, wy] = PLACES[i].window;
-    flash(i);
+  for (const { t, p, i, word } of fresh.slice(-6)) {
+    const place = PLACE_OF(p);
+    const [wx, wy] = windowOf(place);
+    flash(p.id);
     await new Promise((r) => setTimeout(r, 250));
-    const spot = lanternSpot(t);
-    const done = flyLantern({ x: wx, y: wy }, spot, LANTERN_TINTS[i % LANTERN_TINTS.length], 0.35, 1, 1700)
+    const to = word ? { x: place.x - 16 * place.s, y: place.y - 112 * place.s } : lanternSpot(t);
+    const done = flyLantern({ x: wx, y: wy }, to, word ? GOLD : LANTERN_TINTS[i % LANTERN_TINTS.length], 0.35, word ? 1.4 : 1, 1700)
       .then(() => { state.arriving.delete(t); drawStatic(); });
     await new Promise((r) => setTimeout(r, 450));
     if (fresh.length === 1) await done;
   }
 }
 
-async function toggleCandle() {
-  if (!state.data) return;
-  const slot = state.slot;
-  if (!slot) {
-    label(DOCK.x, DOCK.y - 50, 'la nuit, on dort');
+// ---------- Mots doux ----------
+
+// Six fireflies around the sign, each carrying a word. Touch one and it flies home.
+function openWords(pid) {
+  const p = world().people.find((x) => x.id === pid);
+  if (!p?.sign) return;
+  if (p.sign.sent) {
+    const { x, y } = signPoint(p);
+    label(x, y - 34, 'ton mot doux est parti');
     return;
   }
-  const mine = new Set(state.data.me.candles);
-  const lighting = !mine.has(slot);
-  if (lighting) mine.add(slot); else mine.delete(slot);
-  state.data.me.candles = [...mine].sort();
-  save('candled', '1');
-  drawStatic();
-  if (!lighting) {
-    const puff = el(`<circle cx="${DOCK.x}" cy="${DOCK.y - 26}" r="4" fill="#FFF8F1" opacity=".8"/>`);
-    animate(900, (u) => {
-      puff.firstChild.setAttribute('cy', DOCK.y - 26 - 30 * u);
-      puff.firstChild.setAttribute('r', 4 + 8 * u);
-      puff.firstChild.setAttribute('opacity', 0.8 * (1 - u));
-    }).then(() => puff.remove());
-  } else {
-    label(DOCK.x, DOCK.y - 56, `libre ${slotWords(slot)}`);
-  }
-  const before = new Set(state.data.moments.map((m) => m.id));
-  try {
-    const data = await api('/api/candles', { method: 'PUT', body: { slots: state.data.me.candles } });
+  closeWords();
+  save('signed', '1');
+  updateHint();
+  const center = signPoint(p);
+  const cx = Math.min(W - 150, Math.max(150, center.x));
+  const cy = Math.min(560, Math.max(150, center.y + (isNight() ? 0 : 40)));
+  const words = state.data.words || [];
+  const markup = words.map((w, k) => {
+    const a = (k / words.length) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(a) * 78;
+    const y = cy + Math.sin(a) * 72;
+    const bw = w.length * 7 + 22;
+    return `<g class="word" data-word="${esc(w)}" data-to="${pid}" data-x="${x}" data-y="${y}" transform="translate(${x} ${y})">
+      <g class="word-bob" style="animation-delay:-${k * 0.5}s">
+        <image href="${glowSprite('#FFE58A', 60)}" x="-14" y="-24" width="28" height="28"/><circle cy="-10" r="2.6" fill="#FFF3B0"/>
+        <rect x="${-bw / 2}" y="-2" width="${bw}" height="24" rx="12" fill="#FFF8F1" opacity=".92"/>
+        <text y="14" text-anchor="middle">${esc(w)}</text>
+        <rect x="${-bw / 2}" y="-26" width="${bw}" height="50" fill-opacity="0" pointer-events="all"/>
+      </g></g>`;
+  }).join('');
+  state.words = el(markup, $('#o-words', app));
+  state.words.classList.add('words-in');
+}
+
+function closeWords() {
+  if (!state.words) return;
+  const g = state.words;
+  state.words = null;
+  g.classList.add('words-out');
+  setTimeout(() => g.remove(), 400);
+}
+
+async function sendMot(node) {
+  const pid = node.dataset.to;
+  const word = node.dataset.word;
+  const p = world().people.find((x) => x.id === pid);
+  if (!p) return;
+  const from = { x: Number(node.dataset.x), y: Number(node.dataset.y) };
+  node.remove();
+  closeWords();
+  const place = PLACE_OF(p);
+  const [wx, wy] = windowOf(place);
+  const sending = api('/api/mots', { method: 'POST', body: { to: pid, word } }).catch((err) => { label(from.x, from.y, err.message); return null; });
+  await flyLantern(from, { x: wx, y: wy }, GOLD, 1, 0.4 * place.s + 0.1, 1300);
+  flash(pid);
+  const data = await sending;
+  if (data) {
     setData(data);
-    const born = data.moments.find((m) => !before.has(m.id));
-    if (born) {
-      const who = born.with?.name;
-      ripples(LAKE_CENTER.x, LAKE_CENTER.y);
-      setTimeout(() => label(LAKE_CENTER.x, 330, `✨ avec ${who}`), 300);
-    }
     drawStatic();
-  } catch {
-    /* the world stays as you left it; it will sync on the next refresh */
   }
 }
 
-// ---------- Time travel ----------
-
-let returnTimer;
-let glide;
-function setOffset(o) {
-  state.offset = Math.max(0, Math.min(MAX_OFFSET, o));
-  applyTime();
-}
-
-function glideTo(target, duration = 1200) {
-  cancelAnimationFrame(glide);
-  const start = state.offset;
-  const t0 = performance.now();
-  const frame = (now) => {
-    const u = Math.min(1, (now - t0) / duration);
-    setOffset(start + (target - start) * ease(u));
-    if (u < 1) glide = requestAnimationFrame(frame);
-  };
-  glide = requestAnimationFrame(frame);
-}
-
-function scheduleReturn() {
-  clearTimeout(returnTimer);
-  if (state.offset > 0) returnTimer = setTimeout(() => glideTo(0, 1600), 9000);
-}
-
-// Settle on the middle of the nearest part of the day.
-function snap() {
-  const t = viewTime();
-  const h = hourOf(t);
-  const band = BANDS.find((b) => h >= b.from - 0.75 && h < b.to + 0.75);
-  if (state.offset < 0.4) return glideTo(0, 500);
-  if (!band) return undefined;
-  const mid = (Math.max(band.from, band.start) + band.to) / 2;
-  const target = state.offset + (mid - h);
-  return glideTo(target > 0.4 ? target : 0, 500);
-}
-
-function travelToSlot(slot) {
-  const d = slotStart(slot);
-  const band = BANDS.find((b) => b.key === slot.split(':')[1]);
-  d.setHours(0, 0, 0, 0);
-  const mid = new Date(d.getTime() + ((Math.max(band.from, band.start) + band.to) / 2) * 3600000);
-  glideTo((mid - Date.now()) / 3600000, 1600);
-  scheduleReturn();
-}
+// ---------- Gestures ----------
 
 function bindGestures(svg) {
   let g = null;
@@ -535,63 +480,39 @@ function bindGestures(svg) {
     const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
     return { x: pt.x, y: pt.y };
   };
+  const onDock = (v) => Math.abs(v.x - DOCK.x) < 50 && v.y > DOCK.y - 20 && v.y < 745;
   svg.addEventListener('pointerdown', (e) => {
-    cancelAnimationFrame(glide);
-    clearTimeout(returnTimer);
     const v = toView(e);
     g = {
-      x: e.clientX, y: e.clientY, start: state.offset, moved: false, held: false,
-      target: e.target.closest('[data-place],[data-plot],[data-lantern],[data-star],[data-duck],[data-frog]'),
-      v,
-      last: [{ x: e.clientX, t: performance.now() }],
+      x: e.clientX, y: e.clientY, v, held: false,
+      target: e.target.closest('[data-word],[data-place],[data-plot],[data-mot],[data-lantern],[data-sign],[data-duck],[data-frog],[data-sheep],[data-cat],[data-butterfly]'),
     };
     svg.setPointerCapture(e.pointerId);
-    if (v.y > 560 && state.data && !g.target) {
-      press = setTimeout(() => { if (g && !g.moved) { g.held = true; toggleCandle(); } }, 450);
+    if (!state.data) return;
+    const t = g.target;
+    // Holding someone's home: let them go. Holding your own dock: choose your map.
+    if (t?.dataset.place !== undefined || (!t && onDock(v))) {
+      press = setTimeout(() => {
+        if (!g) return;
+        g.held = true;
+        if (t) letGoCard(t.dataset.place);
+        else mapCard();
+      }, 550);
     }
   });
   svg.addEventListener('pointermove', (e) => {
-    if (!g) return;
-    const dx = e.clientX - g.x;
-    const dy = e.clientY - g.y;
-    if (!g.moved && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
-      g.moved = true;
-      clearTimeout(press);
-    }
-    if (!g.moved) {
-      if (Math.abs(dy) > 12) clearTimeout(press);
-      return;
-    }
-    setOffset(g.start - (dx / svg.clientWidth) * HOURS_PER_SCREEN);
-    g.last.push({ x: e.clientX, t: performance.now() });
-    if (g.last.length > 5) g.last.shift();
+    if (g && Math.hypot(e.clientX - g.x, e.clientY - g.y) > 12) clearTimeout(press);
   });
   const end = (e) => {
     clearTimeout(press);
     if (!g) return;
     const gesture = g;
     g = null;
-    if (gesture.held) return;
-    if (gesture.moved) {
-      save('travelled', '1');
-      const [a, b] = [gesture.last[0], gesture.last[gesture.last.length - 1]];
-      let v = b.t > a.t ? -((b.x - a.x) / svg.clientWidth) * HOURS_PER_SCREEN / (b.t - a.t) : 0; // hours per ms
-      let prev = performance.now();
-      const coast = (now) => {
-        const dt = now - prev;
-        prev = now;
-        v *= 0.94 ** (dt / 16);
-        setOffset(state.offset + v * dt);
-        if (Math.abs(v) > 0.0004 && state.offset > 0 && state.offset < MAX_OFFSET) glide = requestAnimationFrame(coast);
-        else { snap(); scheduleReturn(); }
-      };
-      glide = requestAnimationFrame(coast);
-      updateHint();
-      return;
-    }
-    if (e.type === 'pointercancel') return;
-    scheduleReturn();
+    if (gesture.held || e.type === 'pointercancel') return;
+    if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) > 12) return;
     const t = gesture.target;
+    if (t?.dataset.word) { sendMot(t); return; }
+    if (state.words) { closeWords(); return; }
     if (!t) {
       // Touching the water makes rings.
       const { x, y } = gesture.v;
@@ -599,10 +520,13 @@ function bindGestures(svg) {
       return;
     }
     if (life.poke(t)) return;
-    if (t.dataset.place !== undefined) sendThought(Number(t.dataset.place));
+    if (t.dataset.place !== undefined) sendThought(t.dataset.place);
     else if (t.dataset.plot !== undefined) inviteCard();
-    else if (t.dataset.star) travelToSlot(t.dataset.star);
-    else if (t.dataset.lantern) {
+    else if (t.dataset.sign) openWords(t.dataset.sign);
+    else if (t.dataset.mot) {
+      const p = world().people.find((x) => x.id === t.dataset.lantern);
+      label(Number(t.dataset.x), Number(t.dataset.y) - 40, `${p?.name ?? ''} · ${t.dataset.mot}`, 3600);
+    } else if (t.dataset.lantern) {
       const p = world().people.find((x) => x.id === t.dataset.lantern);
       if (p) label(Number(t.dataset.x), Number(t.dataset.y) - 30, p.name);
     }
@@ -618,11 +542,12 @@ function updateHint() {
   if (!hint) return;
   const { people } = world();
   let text = '';
-  if (!state.data) text = '';
-  else if (!people.length) text = 'Touche le petit panneau pour inviter quelqu’un';
-  else if (!load('pinged')) text = `Touche ${PLACES[0].the} de ${people[0].name} pour lui envoyer une pensée`;
-  else if (!load('travelled')) text = 'Fais glisser le ciel pour avancer dans le temps';
-  else if (!load('candled')) text = state.offset > 0.3 ? 'Appui long sur ton ponton : une bougie, tu es libre' : '';
+  if (state.data) {
+    const signed = people.find((p) => p.sign && !p.sign.sent);
+    if (!people.length) text = 'Touche le petit panneau pour inviter quelqu’un';
+    else if (!load('pinged')) text = `Touche ${PLACE_OF(people[0]).the} de ${people[0].name} pour lui envoyer une pensée`;
+    else if (signed && !load('signed')) text = `Un signe est apparu avec ${signed.name} : touche-le`;
+  }
   hint.textContent = text;
   hint.classList.toggle('on', Boolean(text));
   const top = $('.top', app);
@@ -637,7 +562,9 @@ function openCard(html, { closable = true } = {}) {
   root.innerHTML = `<div class="card-wrap ${closable ? 'closable' : ''}"><div class="card">${html}</div></div>`;
   const wrap = $('.card-wrap', root);
   if (closable) wrap.addEventListener('click', (e) => { if (e.target === wrap) closeCard(); });
-  return $('.card', root);
+  const card = $('.card', root);
+  card.addEventListener('click', onAct);
+  return card;
 }
 function closeCard() {
   const wrap = $('.card-wrap', app);
@@ -648,6 +575,13 @@ function closeCard() {
 
 const SHARE_ICON = '<svg viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1"/></svg>';
 const ADD_ICON = '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/></svg>';
+
+function mapTiles(current) {
+  return `<div class="maps">${MAPS.map((m) => `
+    <button type="button" class="map map-${m.key} ${m.key === current ? 'on' : ''}" data-act="${m.ready ? 'map' : ''}" data-map="${m.key}" ${m.ready ? '' : 'disabled'}>
+      <span class="map-name">${m.name}</span>${m.ready ? '' : '<span class="soon">bientôt</span>'}
+    </button>`).join('')}</div>`;
+}
 
 function showWelcome() {
   buildWorld();
@@ -667,9 +601,10 @@ function showWelcome() {
   }
   const card = openCard(`
     <form data-signup>
-      <h1>${who ? `${esc(who.name)} t'attend de l'autre côté du lac` : 'Bienvenue au bord du lac'}</h1>
-      <p class="lead">Comment tu t'appelles ?</p>
+      <h1>${who ? `${esc(who.name)} t'attend` : 'Bienvenue'}</h1>
+      <p class="lead">Comment tu t'appelles, et où veux-tu vivre ?</p>
       <input class="field" name="name" autocomplete="given-name" maxlength="24" placeholder="ton prénom" required>
+      ${mapTiles('campagne')}
       <button class="pill wide" type="submit">C'est moi</button>
     </form>`, { closable: false });
   $('form', card).addEventListener('submit', signup);
@@ -683,7 +618,7 @@ async function signup(e) {
   try {
     const res = await api('/api/users', {
       method: 'POST',
-      body: { name: form.name.value, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, invite },
+      body: { name: form.name.value, map: $('.map.on', form)?.dataset.map, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, invite },
     });
     state.token = res.token;
     save('token', res.token);
@@ -695,14 +630,11 @@ async function signup(e) {
     closeCard();
     drawStatic();
     if (pushSupported && Notification.permission === 'default') {
-      setTimeout(() => {
-        const card = openCard(`
-          <h1>Voir les lanternes arriver</h1>
-          <p class="lead">Active les notifications pour savoir quand quelqu'un pense à toi, même quand l'app dort.</p>
-          <button class="pill wide" data-act="enable-push">Activer</button>
-          <button class="link" data-act="close">plus tard</button>`, { closable: false });
-        card.addEventListener('click', onAct);
-      }, 700);
+      setTimeout(() => openCard(`
+        <h1>Voir les lanternes arriver</h1>
+        <p class="lead">Active les notifications pour savoir quand quelqu'un pense à toi, même quand l'app dort.</p>
+        <button class="pill wide" data-act="enable-push">Activer</button>
+        <button class="link" data-act="close">plus tard</button>`, { closable: false }), 700);
     } else if (pushSupported && Notification.permission === 'granted') {
       syncPush().catch(() => {});
     }
@@ -712,18 +644,52 @@ async function signup(e) {
   }
 }
 
+function mapCard() {
+  openCard(`
+    <h1>Où veux-tu vivre ?</h1>
+    <p class="lead">Tes proches te suivront, chacun à sa place.</p>
+    ${mapTiles(state.data.me.map)}`);
+}
+
+function letGoCard(pid) {
+  const p = world().people.find((x) => x.id === pid);
+  if (!p) return;
+  openCard(`
+    <h1>Laisser partir ${esc(p.name)} ?</h1>
+    <p class="lead">Son lieu s'effacera doucement, comme une brume qui se lève. Personne ne sera prévenu.</p>
+    <button class="pill wide" data-act="let-go" data-id="${p.id}">Laisser partir</button>
+    <button class="link" data-act="close">garder près de moi</button>`);
+}
+
+async function letGo(pid) {
+  closeCard();
+  const home = $(`[data-home="${pid}"]`, app);
+  if (home) {
+    home.style.transition = 'opacity 1.8s ease, filter 1.8s ease';
+    home.style.filter = 'blur(3px)';
+    home.style.opacity = 0;
+  }
+  try {
+    const data = await api('/api/unlink', { method: 'POST', body: { id: pid } });
+    await new Promise((r) => setTimeout(r, 1800));
+    setData(data);
+    drawStatic();
+  } catch {
+    if (home) { home.style.opacity = 1; home.style.filter = ''; }
+  }
+}
+
 function inviteCard() {
   const { me } = state.data;
   const card = openCard(`
-    <h1>Quelqu'un sur l'autre rive ?</h1>
-    <p class="lead">Envoie ce lien à quelqu'un que tu aimes. Sa maison apparaîtra ici.</p>
+    <h1>Quelqu'un près de chez toi ?</h1>
+    <p class="lead">Envoie ce lien à quelqu'un que tu aimes. Son lieu apparaîtra ici.</p>
     <button class="pill wide" data-act="share">Partager le lien</button>
     <p class="tiny">ou donne ton code <b class="code">${esc(me.code)}</b></p>
     <form data-code class="inline">
       <input class="field" name="code" maxlength="6" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="un code reçu ?">
       <button class="pill soft" type="submit">OK</button>
     </form>`);
-  card.addEventListener('click', onAct);
   $('form', card).addEventListener('submit', async (e) => {
     e.preventDefault();
     const value = e.target.code.value.trim().toUpperCase();
@@ -739,11 +705,20 @@ function inviteCard() {
 
 async function onAct(e) {
   const btn = e.target.closest('[data-act]');
-  if (!btn) return;
+  if (!btn || !btn.dataset.act) return;
   switch (btn.dataset.act) {
     case 'enable-push': await enablePush(); closeCard(); break;
     case 'close': closeCard(); break;
     case 'share': shareInvite(); break;
+    case 'let-go': letGo(btn.dataset.id); break;
+    case 'map': {
+      btn.parentElement.querySelectorAll('.map').forEach((m) => m.classList.toggle('on', m === btn));
+      if (state.data && !btn.closest('form')) {
+        setData(await api('/api/me', { method: 'PATCH', body: { map: btn.dataset.map } }));
+        closeCard();
+      }
+      break;
+    }
     default:
   }
 }
@@ -759,10 +734,11 @@ async function shareInvite() {
 }
 
 async function acceptCode(code) {
-  const before = state.data?.people.length || 0;
+  const before = new Set(state.data?.people.map((p) => p.id) || []);
   setData(await api('/api/connect', { method: 'POST', body: { code } }));
   drawStatic();
-  if (state.data.people.length > before) flash(state.data.people.length - 1);
+  const added = state.data.people.find((p) => !before.has(p.id));
+  if (added) flash(added.id);
 }
 
 function b64ToU8(b64) {
@@ -809,7 +785,7 @@ function setData(data) {
 
 async function refresh() {
   setData(await api('/api/me'));
-  drawStatic();
+  if (!state.words) drawStatic();
   receiveNew();
 }
 
@@ -827,10 +803,6 @@ async function wakeUp() {
   receiveNew();
   api('/api/seen', { method: 'POST' }).catch(() => {});
   navigator.clearAppBadge?.()?.catch(() => {});
-  if (travelTo) {
-    setTimeout(() => travelToSlot(travelTo), 800);
-    travelTo = null;
-  }
 }
 
 function cleanUrl() {
@@ -845,10 +817,7 @@ app.addEventListener('click', (e) => {
 
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'push') refresh().catch(() => {});
-  if (e.data?.type === 'open') {
-    travelTo = new URL(e.data.url, location.origin).searchParams.get('t');
-    wakeUp().catch(() => {});
-  }
+  if (e.data?.type === 'open') wakeUp().catch(() => {});
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -862,7 +831,7 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => {
   if (document.visibilityState !== 'visible') return;
   applyTime();
-  if (state.token && state.offset === 0) refresh().catch(() => {});
+  if (state.token) refresh().catch(() => {});
 }, 30000);
 
 // ---------- Boot ----------
@@ -875,7 +844,7 @@ async function boot() {
       await wakeUp();
     } catch {
       if (state.token) {
-        openCard('<h1>Le lac est loin</h1><p class="lead">Pas de connexion pour le moment.</p><button class="pill wide" onclick="location.reload()">Réessayer</button>', { closable: false });
+        openCard('<h1>Le monde est loin</h1><p class="lead">Pas de connexion pour le moment.</p><button class="pill wide" onclick="location.reload()">Réessayer</button>', { closable: false });
       }
       return;
     }
