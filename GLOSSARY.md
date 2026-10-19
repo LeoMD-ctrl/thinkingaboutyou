@@ -46,10 +46,6 @@ _Avoid_: bulle
 
 ## Les moments
 
-**Chemin**:
-La lumière qui relie le point d'ancrage au lieu d'un proche quand les pensées sont allées dans les deux sens assez souvent : le signe que l'un et l'autre se manquent, et qu'il est temps de se trouver un moment.
-_Avoid_: pont, lien (réservé à la relation), match
-
 **Étoile**:
 Un moment ensemble entre deux proches. L'heure exacte et la forme (appel ou visite) se règlent hors de l'app : ce n'est pas un rendez-vous d'agenda.
 _Avoid_: rendez-vous, rdv, événement, moment calé
