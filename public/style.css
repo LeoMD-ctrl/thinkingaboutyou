@@ -162,7 +162,7 @@ form.inline .pill { min-height: 50px; }
 .map.on { box-shadow: inset 0 -30px 30px rgba(30, 30, 60, .2), 0 0 0 3px var(--plum); }
 .map-name { font-weight: 700; font-size: 14px; line-height: 1.1; text-shadow: 0 1px 6px rgba(30, 30, 60, .35); }
 .soon { position: absolute; top: 8px; right: 10px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; background: rgba(255, 255, 255, .7); color: var(--plum); border-radius: 999px; padding: 2px 8px; }
-.map-campagne { background: url(/icons/icon-192.png) center/cover; }
+.map-campagne { background: url(icons/icon-192.png) center/cover; }
 .map-jardin { background: linear-gradient(170deg, #F7D3DE 0%, #F4B8C8 40%, #9BC8A9 41%, #6FA88A 100%); }
 .map-ocean { background: linear-gradient(175deg, #BFE0F2 0%, #9CC9E6 45%, #5E9FC0 46%, #3E7FA6 100%); }
 .map-montagne { background: linear-gradient(170deg, #C9D6F2 0%, #F4F6FB 38%, #AFC0E3 39%, #8798C7 100%); }

@@ -41,6 +41,10 @@ public/            l'app : app.js (le monde, les gestes, signes et mots doux), s
 test/              tests de l'API (node --test)
 ```
 
+## La démo
+
+`public/demo.html` (servie sur `/demo.html`) fait tourner l'app entièrement dans le navigateur, sans compte ni serveur. Maman, Léa, Papa et Mamie y vivent avec leur météo, un signe brille déjà avec Maman, et les proches répondent quelques secondes après une pensée ou un mot doux. La météo de « Chez toi » y est imaginaire, et tout repart à zéro à chaque ouverture.
+
 ## Lancer en local
 
 ```bash

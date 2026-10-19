@@ -5,15 +5,18 @@
 
 import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, CLOUDS, backSVG, frontSVG, cloudSVG, placeSVG, plotSVG, windowOf, smokeOf, glowSprite } from './scene.js';
 import { createLife } from './life.js';
+import { demoApi } from './demo.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const app = $('#app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const NS = 'http://www.w3.org/2000/svg';
 
+// The demo (demo.html) runs entirely in the browser, with pretend close ones.
+const DEMO = Boolean(globalThis.PAT_DEMO);
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isStandalone = DEMO || navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+const pushSupported = !DEMO && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
 const params = new URLSearchParams(location.search);
 let invite = (params.get('invite') || '').toUpperCase() || null;
@@ -28,7 +31,7 @@ const MAPS = [
 ];
 
 const state = {
-  token: load('token'),
+  token: DEMO ? null : load('token'),
   data: null,
   inviter: null,
   phase: null,
@@ -39,16 +42,21 @@ const state = {
 };
 let life = null;
 
+// The demo keeps nothing between visits.
+const memory = new Map();
 function load(k) {
+  if (DEMO) return memory.get(k) ?? null;
   try { return localStorage.getItem(`pat:${k}`); } catch { return null; }
 }
 function save(k, v) {
+  if (DEMO) { if (v == null) memory.delete(k); else memory.set(k, v); return; }
   try { v == null ? localStorage.removeItem(`pat:${k}`) : localStorage.setItem(`pat:${k}`, v); } catch { /* private mode */ }
 }
 
 // ---------- API ----------
 
 async function api(path, { method = 'GET', body } = {}) {
+  if (DEMO) return demoApi(path, { method, body });
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
@@ -736,7 +744,7 @@ function homeCard() {
     <p class="lead">Où veux-tu vivre ? Tes proches te suivront, chacun à sa place.</p>
     ${mapTiles(me.map)}
     <div class="toggle-row">
-      <div><b>Partager ma météo</b><small>Tes proches verront le temps qu'il fait chez toi, à 10 km près. Ta position exacte n'est jamais partagée.</small></div>
+      <div><b>Partager ma météo</b><small>${DEMO ? 'Dans la démo, la météo est imaginaire : chaque activation en essaie une nouvelle.' : 'Tes proches verront le temps qu’il fait chez toi, à 10 km près. Ta position exacte n’est jamais partagée.'}</small></div>
       <button type="button" class="switch ${me.sharesWeather ? 'on' : ''}" role="switch" aria-checked="${me.sharesWeather}" data-act="weather" aria-label="Partager ma météo"><i></i></button>
     </div>
     <p class="tiny weather-note"></p>`);
@@ -759,7 +767,7 @@ async function toggleWeather(btn) {
   btn.disabled = true;
   try {
     if (on) {
-      const where = await position();
+      const where = DEMO ? { lat: 0, lon: 0 } : await position();
       setData(await api('/api/weather', { method: 'PUT', body: where }));
       save('geo-at', String(Date.now()));
     } else {
@@ -776,7 +784,7 @@ async function toggleWeather(btn) {
 
 // When sharing, quietly follow the person as they travel (only if the phone already allows it).
 async function followWeather() {
-  if (!state.data?.me.sharesWeather) return;
+  if (DEMO || !state.data?.me.sharesWeather) return;
   if (Date.now() - Number(load('geo-at') || 0) < 6 * 3600000) return;
   const perm = await navigator.permissions?.query({ name: 'geolocation' }).catch(() => null);
   if (perm?.state !== 'granted') return;
@@ -953,6 +961,9 @@ app.addEventListener('click', (e) => {
   if (e.target.closest('.top [data-act]')) onAct(e);
 });
 
+// In the demo, pretend close ones answer back.
+addEventListener('pat-demo', () => refresh().catch(() => {}));
+
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type === 'push') refresh().catch(() => {});
   if (e.data?.type === 'open') wakeUp().catch(() => {});
@@ -975,7 +986,7 @@ setInterval(() => {
 // ---------- Boot ----------
 
 async function boot() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  if (!DEMO && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   if (state.token) {
     buildWorld();
     try {
