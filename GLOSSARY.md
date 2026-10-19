@@ -31,7 +31,7 @@ L'endroit de la carte où se trouve le compte lui-même, au premier plan (un pon
 _Avoid_: avatar, base, chez moi
 
 **Lieu**:
-L'endroit d'une carte où habite un proche (une maison, un phare, un moulin…). Une carte compte six lieux.
+L'endroit d'une carte où habite un proche (une maison, un phare, un moulin…). Une carte compte six lieux ; chaque proche reçoit le premier lieu libre et garde son rang quand on change de carte.
 _Avoid_: maison (sauf pour ce lieu précis), slot, place
 
 ## Les gestes
