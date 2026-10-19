@@ -2,14 +2,18 @@
 // butterflies, a cat asleep on the dock, a cherry tree losing its petals, a field
 // of flowers, trees and reeds in the wind, glints on the water. Most can be touched.
 
-import { PHASES, scaleAt, onPlane, glowSprite } from './scene.js';
+import { PHASES, scaleAt, onPlane, glowSprite, farSurface, midSurface } from './scene.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (n) => Array.from({ length: n }, (_, i) => i);
 
 // [x, y, scale]: trees get smaller as they sit higher on the hills (further away).
-const TREES = [[142, 506, 0.6], [262, 484, 0.62], [190, 458, 0.34], [252, 440, 0.36], [345, 447, 0.36]];
+// Trees stand on the terrain: small ones on the far ridge, bigger ones on the green hills.
+const TREES = [
+  ...[[60, 0.34], [172, 0.3], [238, 0.34], [300, 0.34]].map(([x, s]) => [x, farSurface(x) + 4 * s, s, true]),
+  ...[[124, 0.52], [262, 0.62]].map(([x, s]) => [x, midSurface(x) + 4 * s, s, false]),
+];
 const SHEEP_HOMES = [[58, 694], [104, 708], [146, 686]];
 const CAT = { x: onPlane(0.14, 652), y: 652 };
 const FLOWER_COLORS = ['#FFD1DC', '#FFF3B0', '#D9C8FF', '#FFFFFF', '#FFC8A2'];
@@ -66,9 +70,8 @@ export function createLife({ back, water, front, ripple, say }) {
     { x: 94, y: DUCK_Y + 4, dir: 1, size: 0.7 },
   ];
 
-  const tree = ([x, y, s], i) => {
-    const far = y < 465;
-    return `<g transform="translate(${x} ${y}) scale(${s})"><g class="sway" style="animation-delay:-${i * 0.7}s">
+  const tree = ([x, y, s, far], i) => {
+    return `<g transform="translate(${x} ${y}) scale(${s})"><ellipse cy="0" rx="13" ry="2.6" fill="${far ? c.farShade : c.hillShade}" opacity=".6"/><g class="sway" style="animation-delay:-${i * 0.7}s">
       <rect x="-2.5" y="-16" width="5" height="17" rx="2" fill="${c.woodShade}"/>
       <circle cx="0" cy="-27" r="14" fill="${far ? c.farShade : c.hillShade}"/>
       <circle cx="-5" cy="-31" r="7" fill="${far ? c.far : c.hill}" opacity=".7"/></g></g>`;

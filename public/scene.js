@@ -36,15 +36,30 @@ export const PHASES = {
   },
 };
 
+// The ground. Hills are smooth bumps, so anything can be set exactly on their surface
+// (no more houses floating above a ridge).
+const bump = (x, c, w, h) => h * Math.exp(-(((x - c) / w) ** 2));
+// The far, misty ridge.
+export const farSurface = (x) => 472 - bump(x, 80, 75, 42) - bump(x, 290, 85, 58) - bump(x, 185, 40, 18);
+// The near, green hills where homes stand.
+export const midSurface = (x) => 506 - bump(x, 55, 85, 46) - bump(x, 322, 90, 54) - bump(x, 192, 55, 24);
+
+const ridgePath = (surface, bottom) => {
+  let d = `M-10 ${bottom}`;
+  for (let x = -10; x <= W + 10; x += 5) d += ` L${x} ${surface(x).toFixed(1)}`;
+  return `${d} L${W + 10} ${bottom}Z`;
+};
+
 // The countryside: where the people you love live, from the nearest hill to the farthest.
-// (x, y) is where the place stands, s its size (smaller when farther away).
+// Each home stands on the green hills, sunk a little into the grass; s is its size.
+const onHill = (type, the, x, s) => ({ type, the, x, y: midSurface(x) + 5 * s, s });
 export const PLACES = [
-  { type: 'maison', the: 'la maison', x: 318, y: 468, s: 1 },
-  { type: 'moulin', the: 'le moulin', x: 100, y: 490, s: 1 },
-  { type: 'ferme', the: 'la ferme', x: 216, y: 476, s: 0.8 },
-  { type: 'roulotte', the: 'la roulotte', x: 366, y: 488, s: 0.9 },
-  { type: 'cabane', the: 'la cabane dans l’arbre', x: 34, y: 494, s: 1 },
-  { type: 'pigeonnier', the: 'le pigeonnier', x: 160, y: 466, s: 0.7 },
+  onHill('maison', 'la maison', 318, 1),
+  onHill('moulin', 'le moulin', 96, 1),
+  onHill('ferme', 'la ferme', 206, 0.85),
+  onHill('roulotte', 'la roulotte', 368, 0.9),
+  onHill('cabane', 'la cabane dans l’arbre', 30, 1),
+  onHill('pigeonnier', 'le pigeonnier', 150, 0.8),
 ];
 
 // One vanishing point in the middle of the horizon: everything lying on the
@@ -158,9 +173,8 @@ export function frontSVG(c) {
   const rings = [18, 40, 66, 96, 130, 168]
     .map((r) => `<ellipse cx="${LAKE_CENTER.x}" cy="${LAKE_CENTER.y}" rx="${r * 1.8}" ry="${r * 0.42}" opacity="${1 - r / 220}"/>`).join('');
   return wrap(`
-    <g filter="url(#b-far)">${shaded('M0 470 C40 430 90 420 140 445 C190 470 220 430 270 420 C320 410 360 440 390 455 L390 520 L0 520Z', c.far, 'url(#farSh)')}</g>
-    ${shaded('M0 515 C50 470 120 470 170 505 L170 540 L0 540Z', c.hill, 'url(#hillSh)')}
-    ${shaded('M220 505 C270 455 340 450 390 480 L390 540 L220 540Z', c.hill, 'url(#hillSh)')}
+    <g filter="url(#b-far)">${shaded(ridgePath(farSurface, 530), c.far, 'url(#farSh)')}</g>
+    ${shaded(ridgePath(midSurface, 545), c.hill, 'url(#hillSh)')}
     ${shaded(LAKE, c.lake, 'url(#lakeSh)')}
     <g clip-path="url(#lakeClip)" fill="none" stroke="${c.ripple}" stroke-width="3">${rings}</g>
     ${pier.under}

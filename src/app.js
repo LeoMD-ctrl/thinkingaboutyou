@@ -4,11 +4,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.js';
+import { openMeteo, coarse } from './weather.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const WEEK_MS = 7 * 86400000;
 const DAY_MS = 86400000;
+const WEATHER_FRESH_MS = 30 * 60000;
 
 // The decors one can live in. Every map shares the same gestures.
 export const MAPS = ['campagne', 'jardin', 'ocean', 'montagne'];
@@ -44,8 +46,9 @@ class HttpError extends Error {
  * @param {string} opts.vapidPublicKey
  * @param {(sub: object, payload: string) => Promise<void>} opts.sendPush
  *        rejects with { statusCode: 404|410 } when the subscription is gone
+ * @param {(lat: number, lon: number) => Promise<{kind: string, temp: number}>} [opts.fetchWeather]
  */
-export function createApp({ dataDir, vapidPublicKey, sendPush }) {
+export function createApp({ dataDir, vapidPublicKey, sendPush, fetchWeather = openMeteo }) {
   const store = new Store(dataDir);
   const db = store.data;
 
@@ -69,6 +72,34 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
         }
       }
     }));
+  }
+
+  // ---------- weather (opt-in) ----------
+
+  const pending = new Set();
+  async function refreshWeather(user) {
+    const w = user.weather;
+    if (!w || pending.has(user.id)) return;
+    pending.add(user.id);
+    try {
+      const now = await fetchWeather(w.lat, w.lon);
+      if (user.weather === w) {
+        Object.assign(w, now, { at: Date.now() });
+        store.save();
+      }
+    } catch (err) {
+      console.warn('weather failed', err?.message || err);
+    } finally {
+      pending.delete(user.id);
+    }
+  }
+
+  // What others may know: the kind of weather and the temperature, never the place.
+  function weatherOf(user) {
+    const w = user.weather;
+    if (!w) return null;
+    if (Date.now() - (w.at || 0) > WEATHER_FRESH_MS) refreshWeather(user);
+    return w.kind ? { kind: w.kind, temp: w.temp } : null;
   }
 
   const thoughts = (from, to, since) => db.pings.filter((p) => p.from === from && p.to === to && p.at > since);
@@ -100,10 +131,14 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
         pingsFromMe: thoughts(me.id, p.id, now - WEEK_MS).map((x) => x.at),
         mots: thoughts(p.id, me.id, now - DAY_MS).filter((x) => x.word).map((x) => ({ at: x.at, word: x.word })),
         sign: sign ? { since: sign.since, sent: Boolean(sign.sent[me.id]) } : null,
+        weather: weatherOf(p),
       };
     });
     return {
-      me: { ...publicUser(me), code: me.code, map: me.map || MAPS[0], seenAt: me.seenAt || 0, hasPush: (me.subs || []).length > 0 },
+      me: {
+        ...publicUser(me), code: me.code, map: me.map || MAPS[0], seenAt: me.seenAt || 0, hasPush: (me.subs || []).length > 0,
+        sharesWeather: Boolean(me.weather), weather: weatherOf(me),
+      },
       people,
       words: WORDS,
     };
@@ -212,6 +247,28 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     if (!inviter) throw new HttpError(404, 'Ce code ne mène nulle part 🥲');
     if (inviter.id === me.id) throw new HttpError(400, "C'est ton propre code 😄");
     await connect(me, inviter);
+    return snapshot(me);
+  });
+
+  // Sharing my weather: coarse coordinates only, and it can be stopped at any time.
+  route('PUT', /^\/api\/weather$/, async (req, _, body) => {
+    const me = requireUser(req);
+    const lat = coarse(body.lat);
+    const lon = coarse(body.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      throw new HttpError(400, 'Position invalide');
+    }
+    const moved = !me.weather || me.weather.lat !== lat || me.weather.lon !== lon;
+    if (moved) me.weather = { lat, lon };
+    store.save();
+    if (moved) await refreshWeather(me);
+    return snapshot(me);
+  });
+
+  route('DELETE', /^\/api\/weather$/, (req) => {
+    const me = requireUser(req);
+    delete me.weather;
+    store.save();
     return snapshot(me);
   });
 
@@ -348,7 +405,15 @@ export function createApp({ dataDir, vapidPublicKey, sendPush }) {
     }
   });
 
-  server.on('close', () => store.flush());
+  // Keep shared weather fresh even when nobody is looking.
+  const weatherTimer = setInterval(() => {
+    for (const u of Object.values(db.users)) if (u.weather) refreshWeather(u);
+  }, WEATHER_FRESH_MS);
+  weatherTimer.unref();
+  server.on('close', () => {
+    clearInterval(weatherTimer);
+    store.flush();
+  });
 
   return { server, store };
 }

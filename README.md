@@ -6,7 +6,8 @@ Un petit monde où vivent les gens que tu aimes. Il n'y a aucun bouton : tout se
 - **Tes proches habitent des lieux** : la maison, le moulin, la ferme, la roulotte, la cabane dans l'arbre, le pigeonnier, soit 6 places. Chacun reçoit le premier lieu libre et le garde. Une fenêtre brille d'autant plus que la personne a pensé à toi récemment, et sa cheminée fume.
 - **Une pensée = toucher son lieu.** Une lanterne part de ton ponton, traverse l'étang et va jusque chez lui ou elle, qui reçoit « pense à toi 💗 ». Pas de texte, pas d'accusé de lecture.
 - **Les pensées reçues** montent de leur lieu sous forme de lanternes et flottent dans ton ciel pendant une journée.
-- **Le signe** : quand chacun a envoyé au moins 3 pensées à l'autre sur les 7 derniers jours, un signe apparaît. La nuit, c'est une étoile au-dessus de son lieu ; le jour, un arc-en-ciel entre ton ponton et chez lui ou elle. Il s'efface si les pensées s'arrêtent.
+- **Le signe** : quand chacun a envoyé au moins 3 pensées à l'autre sur les 7 derniers jours, un signe apparaît. La nuit, c'est une étoile au-dessus de son lieu ; le jour, un cerf-volant attaché à son toit. Il s'efface si les pensées s'arrêtent.
+- **La météo (si on le veut)** : un appui long sur ton ponton ouvre « Chez toi », avec un interrupteur « Partager ma météo ». Une fois activé, le temps qu'il fait vraiment chez toi recouvre ta carte (ciel gris, pluie avec des ronds sur l'étang, neige, brume, orage) et apparaît en petit au-dessus de ton lieu chez tes proches. En le touchant, on lit « Chez Maman · pluie · 12° ». Seule une position arrondie à ~10 km est utilisée, elle n'est jamais montrée, et on peut arrêter à tout moment. La météo vient d'[Open-Meteo](https://open-meteo.com), gratuit et sans clé.
 - **Le mot doux** : toucher un signe fait apparaître 6 lucioles, chacune portant un mot (« courage ! », « belle journée », « tu me manques »…). On en touche une, elle s'envole. L'autre reçoit « Léo pense à toi · courage ! » et voit une lanterne dorée au-dessus de ton lieu ; en la touchant, il ou elle lit le mot. Un seul mot doux par signe, pour que ça ne devienne jamais pressant.
 - **Laisser partir** : un appui long sur un lieu propose « Laisser partir Maman ? ». Son lieu s'efface comme une brume, sans prévenir personne. Le compte reste, et une nouvelle invitation peut recréer le lien.
 - **La campagne vit** : une cane et ses canetons, une grenouille sur les nénuphars, des poissons qui sautent, des oiseaux, des moutons qui broutent, des papillons, un chat qui dort sur le ponton, un cerisier qui perd ses pétales, un champ de fleurs, des lucioles le soir, des arbres et des roseaux dans le vent. Presque tout se touche (« coin ! », « bêê », « miaou », « croâ »), et toucher l'eau fait des ronds.
@@ -31,7 +32,8 @@ Tu leur envoies un lien et c'est tout. Si l'idée prend, on pourra écrire une v
 
 ```
 server.js          démarrage, clés VAPID, envoi des push (web-push)
-src/app.js         API (pensées, signes, mots doux, liens) + fichiers statiques
+src/app.js         API (pensées, signes, mots doux, liens, météo) + fichiers statiques
+src/weather.js     météo réelle (Open-Meteo), positions arrondies
 src/store.js       mini base JSON (data/db.json), écritures atomiques
 public/            l'app : app.js (le monde, les gestes, signes et mots doux), scene.js (le paysage et les lieux),
                    life.js (animaux et animations),
@@ -46,6 +48,8 @@ npm install
 npm start          # http://localhost:3000
 npm test
 ```
+
+Sans réseau, `FAKE_WEATHER=1 npm start` invente la météo à partir de la latitude partagée (décimale .0 grand beau, .1 nuages, .2 gris, .3 brouillard, .4 pluie, .5 neige, .6 orage).
 
 Les push marchent sur `localhost` dans Chrome ou Firefox sur ordinateur. Pour un iPhone, il faut une URL en **HTTPS**, donc un déploiement.
 

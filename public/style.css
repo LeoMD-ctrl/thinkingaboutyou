@@ -45,8 +45,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 @keyframes turn { to { transform: rotate(360deg); } }
 
 /* Signs and mots doux */
-.rainbow { animation: shimmer 5s ease-in-out infinite; }
-@keyframes shimmer { 50% { filter: brightness(1.12); } }
+.kite { transform-box: fill-box; transform-origin: 50% 100%; animation: kite 4.5s ease-in-out infinite; }
+@keyframes kite { 0%, 100% { transform: rotate(-7deg) translate(0, 0); } 50% { transform: rotate(6deg) translate(3px, -5px); } }
+.kite .tail { transform-box: fill-box; transform-origin: 50% 0; animation: tail 1.6s ease-in-out infinite alternate; }
+@keyframes tail { to { transform: skewX(14deg); } }
 .word text { font-size: 13px; }
 .word-bob { animation: word-bob 3.4s ease-in-out infinite; }
 @keyframes word-bob { 50% { transform: translateY(-5px); } }
@@ -164,3 +166,31 @@ form.inline .pill { min-height: 50px; }
 .map-jardin { background: linear-gradient(170deg, #F7D3DE 0%, #F4B8C8 40%, #9BC8A9 41%, #6FA88A 100%); }
 .map-ocean { background: linear-gradient(175deg, #BFE0F2 0%, #9CC9E6 45%, #5E9FC0 46%, #3E7FA6 100%); }
 .map-montagne { background: linear-gradient(170deg, #C9D6F2 0%, #F4F6FB 38%, #AFC0E3 39%, #8798C7 100%); }
+
+/* Weather */
+#o-weather { pointer-events: none; }
+.drop { animation: drop .9s linear infinite; }
+@keyframes drop { from { transform: translateY(-2px); opacity: 0; } 30% { opacity: 1; } to { transform: translateY(7px); opacity: 0; } }
+.flake { animation: flake 2.4s linear infinite; }
+@keyframes flake { from { transform: translate(0, -2px); opacity: 0; } 30% { opacity: 1; } to { transform: translate(2px, 9px); opacity: 0; } }
+.bolt { opacity: 0; animation: bolt 3.6s steps(1) infinite; }
+@keyframes bolt { 0%, 88%, 100% { opacity: 0; } 90%, 94% { opacity: 1; } }
+.wisp { animation: wisp 4s ease-in-out infinite alternate; }
+@keyframes wisp { to { transform: translateX(6px); } }
+.rain { animation: rain 1s linear infinite; }
+@keyframes rain { to { transform: translate(-60px, 1000px); } }
+.snow { animation: snowfall 12s linear infinite; }
+@keyframes snowfall { 0% { transform: translate(0, 0); } 50% { transform: translate(var(--sway), 450px); } 100% { transform: translate(0, 900px); } }
+.flash { opacity: 0; animation: flash 7s steps(1) infinite; }
+@keyframes flash { 0%, 93%, 96%, 100% { opacity: 0; } 94% { opacity: .5; } 97% { opacity: .25; } }
+.haze { animation: drift 38s ease-in-out infinite alternate; }
+
+/* Switch */
+.toggle-row { display: flex; gap: 14px; align-items: center; text-align: left; margin: 4px 0 0; }
+.toggle-row b { display: block; font-size: 16px; }
+.toggle-row small { display: block; color: var(--ink-soft); font-size: 13px; line-height: 1.3; margin-top: 2px; }
+.switch { flex: none; width: 52px; height: 32px; border-radius: 999px; background: #DCD3E2; position: relative; transition: background .25s; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgba(30, 30, 60, .2); transition: transform .25s; }
+.switch.on { background: var(--plum); }
+.switch.on i { transform: translateX(20px); }
+.weather-note:empty { display: none; }

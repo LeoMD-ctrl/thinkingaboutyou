@@ -1,6 +1,7 @@
 // Pense à toi — a little world. The people you love live in the places around you.
 // Touch someone's home to send them a thought. When you both keep thinking of each
-// other, a sign appears (a star by night, a rainbow by day): touch it to send a mot doux.
+// other, a sign appears (a star by night, a kite by day): touch it to send a mot doux.
+// Those who share their weather bring it along: rain over their home, snow on your map.
 
 import { W, H, PHASES, PLACES, DOCK, LAKE_CENTER, CLOUDS, backSVG, frontSVG, cloudSVG, placeSVG, plotSVG, windowOf, smokeOf, glowSprite } from './scene.js';
 import { createLife } from './life.js';
@@ -107,7 +108,7 @@ function buildWorld() {
         <g id="clouds">${CLOUDS.map(({ box: [x, y, w, h] }, i) => `<image class="drift" style="animation-delay:-${i * 17}s" x="${x}" y="${y}" width="${w}" height="${h}"/>`).join('')}</g></svg>
       <div class="layers">${phases.map((p) => `<img alt="" data-front="${p}" src="${layerUrl('front', p)}">`).join('')}</div>
       ${svgOpen('overlay')}
-        <g id="o-reflect"></g><g id="o-back"></g><g id="o-static"></g><g id="o-water"></g><g id="o-front"></g><g id="o-fx"></g><g id="o-words"></g>
+        <g id="o-reflect"></g><g id="o-back"></g><g id="o-static"></g><g id="o-water"></g><g id="o-front"></g><g id="o-weather"></g><g id="o-fx"></g><g id="o-words"></g>
       </svg>
       <div class="hint"></div>
       <div class="top"></div>
@@ -173,7 +174,9 @@ function applyTime() {
     state.phase = dominant;
     app.querySelectorAll('#clouds image').forEach((img, i) => img.setAttribute('href', layerUrl('cloud', dominant, i)));
     life.setPhase(dominant);
+    drawnWeather = undefined;
     drawStatic();
+    drawWeather();
   }
 }
 
@@ -186,11 +189,6 @@ function drawStatic() {
   const c = PHASES[state.phase || 'day'];
   const { people } = world();
   let out = '';
-
-  // Signs go first, so the homes sit on top of where the rainbows land.
-  for (const p of people) {
-    if (p.sign) out += signSVG(p);
-  }
 
   // Homes of the people you love. Their window glows warmer the more they thought of you.
   for (const p of people) {
@@ -206,8 +204,15 @@ function drawStatic() {
       const [cx, cy] = chimney;
       out += `<g class="smoke" opacity="${0.5 + warmth / 2}">${[0, 1, 2].map((k) => `<circle cx="${cx}" cy="${cy}" r="${3.4 * s}" fill="${c.cloud}" style="animation-delay:${k * 1.3}s"/>`).join('')}</g>`;
     }
+    out += `<ellipse cx="${place.x}" cy="${place.y - s}" rx="${24 * s}" ry="${3.8 * s}" fill="${c.hillShade}" opacity=".65"/>`;
     out += placeSVG(place, c);
     out += `<rect data-place="${p.id}" x="${place.x - 30 * s}" y="${place.y - 82 * s}" width="${60 * s}" height="${92 * s}" fill-opacity="0" pointer-events="all"/></g>`;
+    if (p.weather) out += weatherBadge(p, place, c);
+  }
+
+  // Signs: a star by night, a kite tied to their roof by day.
+  for (const p of people) {
+    if (p.sign) out += signSVG(p, c);
   }
 
   // An empty spot, waiting for someone.
@@ -215,6 +220,7 @@ function drawStatic() {
   const free = PLACES.findIndex((_, i) => !taken.has(i));
   if (free >= 0 && state.data) {
     const place = PLACES[free];
+    out += `<ellipse cx="${place.x}" cy="${place.y - place.s}" rx="${12 * place.s}" ry="${2.6 * place.s}" fill="${c.hillShade}" opacity=".6"/>`;
     out += plotSVG(place, c);
     out += `<rect data-plot x="${place.x - 26 * place.s}" y="${place.y - 48 * place.s}" width="${52 * place.s}" height="${56 * place.s}" fill-opacity="0" pointer-events="all"/>`;
   }
@@ -239,17 +245,20 @@ function drawStatic() {
   updateHint();
 }
 
-// The sign between you and someone: a star by night, a rainbow by day.
-function signPoint(p) {
-  const place = PLACE_OF(p);
-  if (isNight()) return { x: place.x, y: place.y - 96 * place.s };
-  const [wx] = windowOf(place);
-  return { x: (DOCK.x + wx) / 2, y: Math.min(DOCK.y, place.y) - 150 };
+// The sign between you and someone: a star by night, a kite by day.
+function kiteAt(place) {
+  const side = place.x > W / 2 ? -1 : 1;
+  return { x: Math.min(W - 34, Math.max(34, place.x + side * 34 * place.s)), y: place.y - 132 * place.s };
 }
 
-function signSVG(p) {
+function signPoint(p) {
   const place = PLACE_OF(p);
-  const dim = p.sign.sent ? 0.7 : 1;
+  return isNight() ? { x: place.x, y: place.y - 96 * place.s } : kiteAt(place);
+}
+
+function signSVG(p, c) {
+  const place = PLACE_OF(p);
+  const dim = p.sign.sent ? 0.75 : 1;
   if (isNight()) {
     const { x, y } = signPoint(p);
     return `<g class="star" data-sign="${p.id}" transform="translate(${x} ${y})" opacity="${dim}">
@@ -257,17 +266,81 @@ function signSVG(p) {
       <path d="M0 -13 C2 -4 4 -2 13 0 C4 2 2 4 0 13 C-2 4 -4 2 -13 0 C-4 -2 -2 -4 0 -13Z" fill="#FFF8DA"/>
       <circle r="26" fill-opacity="0" pointer-events="all"/></g>`;
   }
-  const [x2, y2] = [place.x, place.y - 6 * place.s];
-  const [x1, y1] = [DOCK.x, DOCK.y - 4];
-  const top = signPoint(p);
-  const bands = ['#F7B3C2', '#FFD3A8', '#FFF1B0', '#CDEFC2', '#B8D6FF', '#D6C4FF'];
-  const arcs = bands.map((col, i) => {
-    const o = (i - 2.5) * 4.6;
-    const cy = 2 * top.y - (y1 + y2) / 2 + o * 2;
-    return `<path d="M${x1 + o} ${y1} Q${top.x} ${cy} ${x2 + o * 0.4} ${y2}" stroke="${col}" stroke-width="5" fill="none" stroke-linecap="round"/>`;
-  }).join('');
-  const hit = `<path d="M${x1} ${y1} Q${top.x} ${2 * top.y - (y1 + y2) / 2} ${x2} ${y2}" stroke="#000" stroke-opacity="0" stroke-width="44" fill="none" pointer-events="stroke"/>`;
-  return `<g class="rainbow" data-sign="${p.id}" opacity="${0.8 * dim}">${arcs}${hit}</g>`;
+  // The string runs from their roof up to the kite, sagging softly in the wind.
+  const k = kiteAt(place);
+  const roof = { x: place.x, y: place.y - 40 * place.s };
+  const sag = { x: (roof.x + k.x) / 2 + (k.x > roof.x ? 10 : -10), y: (roof.y + k.y) / 2 + 18 };
+  return `<g class="kite-sign" data-sign="${p.id}" opacity="${dim}">
+    <path d="M${roof.x} ${roof.y} Q${sag.x} ${sag.y} ${k.x} ${k.y + 12}" stroke="${c.wall}" stroke-width="1.1" fill="none" opacity=".85" pointer-events="none"/>
+    <g transform="translate(${k.x} ${k.y})"><g class="kite">
+      <path d="M0 -15 L11 0 L0 15 L-11 0Z" fill="#F7B3C2"/><path d="M0 -15 L11 0 L0 15Z" fill="#FFD3A8"/>
+      <path d="M0 -15 V15 M-11 0 H11" stroke="#E58FA6" stroke-width="1" opacity=".8"/>
+      <path class="tail" d="M0 15 q-6 8 0 14 q6 6 0 12 q-5 6 1 11" stroke="${c.wall}" stroke-width="1" fill="none"/>
+      <path d="M-3 26 l3 3 l3 -3 l-3 -3z M-3 38 l3 3 l3 -3 l-3 -3z" fill="#B8D6FF"/>
+      <circle r="24" cy="6" fill-opacity="0" pointer-events="all"/>
+    </g></g></g>`;
+}
+
+// ---------- Weather ----------
+
+const WEATHER_WORDS = { clear: 'grand beau', cloudy: 'quelques nuages', overcast: 'temps gris', fog: 'brouillard', rain: 'pluie', snow: 'neige', storm: 'orage' };
+const SMALL_CLOUD = 'M-13 3a6 6 0 0 1 2-11 8 8 0 0 1 15-3 6.5 6.5 0 0 1 8 9 5 5 0 0 1-2 5z';
+
+// A little weather of their own, above the home of someone who shares it.
+function weatherBadge(p, place, c) {
+  const { kind } = p.weather;
+  if (kind === 'clear' && isNight()) return '';
+  const s = place.s;
+  const dark = kind === 'storm' ? '#7D7FA6' : kind === 'overcast' || kind === 'rain' ? '#C9CEE3' : c.cloud;
+  let inner = '';
+  if (kind === 'clear') inner = `<image href="${glowSprite('#FFE6A0', 60)}" x="-14" y="-14" width="28" height="28"/><circle r="5.5" fill="#FFF3C4"/>`;
+  else if (kind === 'fog') inner = [0, 1, 2].map((k) => `<path class="wisp" style="animation-delay:-${k * 1.4}s" d="M${-14 + k * 3} ${k * 5 - 4} h${22 - k * 4}" stroke="${c.cloud}" stroke-width="3" stroke-linecap="round" opacity=".85"/>`).join('');
+  else {
+    inner = `<path d="${SMALL_CLOUD}" fill="${dark}"/>`;
+    if (kind === 'rain' || kind === 'storm') inner += [-7, 0, 7].map((x, k) => `<path class="drop" style="animation-delay:-${k * 0.3}s" d="M${x} 6 l-1.5 5" stroke="#8FB8E8" stroke-width="1.6" stroke-linecap="round"/>`).join('');
+    if (kind === 'snow') inner += [-7, 0, 7].map((x, k) => `<circle class="flake" style="animation-delay:-${k * 0.7}s" cx="${x}" cy="8" r="1.6" fill="#FFFFFF"/>`).join('');
+    if (kind === 'storm') inner += '<path class="bolt" d="M1 4 l-4 7 h4 l-3 7" stroke="#FFE27A" stroke-width="1.8" fill="none" stroke-linejoin="round"/>';
+  }
+  return `<g class="weather-badge" data-weather="${p.id}" transform="translate(${place.x} ${place.y - 70 * s}) scale(${0.9 * s + 0.2})">
+    ${inner}<circle r="16" fill-opacity="0" pointer-events="all"/></g>`;
+}
+
+// Your own weather, over your whole map.
+let rainTimer;
+let drawnWeather = null;
+function drawWeather() {
+  const g = $('#o-weather', app);
+  if (!g) return;
+  const kind = state.data?.me.weather?.kind || null;
+  if (kind === drawnWeather && g.childElementCount) return;
+  drawnWeather = kind;
+  clearInterval(rainTimer);
+  const r = (i, k) => Math.abs(Math.sin(i * 12.9898 + k * 78.233) * 43758.5453) % 1;
+  const veil = (o) => `<rect width="${W}" height="${H}" fill="#4A5878" opacity="${o}"/>`;
+  let out = '';
+  if (kind === 'rain' || kind === 'storm') {
+    out += veil(kind === 'storm' ? 0.24 : 0.14);
+    out += Array.from({ length: 70 }, (_, i) => `<path class="rain" style="animation-delay:-${(r(i, 1) * 1.2).toFixed(2)}s;animation-duration:${(0.8 + r(i, 2) * 0.5).toFixed(2)}s" d="M${(r(i, 3) * (W + 60)).toFixed(0)} ${(-20 - r(i, 4) * 200).toFixed(0)} l-3 13" stroke="#E6EEFA" stroke-width="1.2" stroke-linecap="round" opacity=".55"/>`).join('');
+    if (kind === 'storm') out += `<rect class="flash" width="${W}" height="${H}" fill="#FFFFFF"/>`;
+    // Drops landing on the pond.
+    rainTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') ripples(20 + Math.random() * 350, 505 + Math.random() * 125, 0.25);
+    }, 420);
+  } else if (kind === 'snow') {
+    out += veil(0.06);
+    out += Array.from({ length: 60 }, (_, i) => `<circle class="snow" style="--sway:${(r(i, 5) * 30 - 15).toFixed(0)}px;animation-delay:-${(r(i, 1) * 12).toFixed(1)}s;animation-duration:${(9 + r(i, 2) * 6).toFixed(1)}s" cx="${(r(i, 3) * W).toFixed(0)}" cy="-10" r="${(1.2 + r(i, 4) * 2).toFixed(1)}" fill="#FFFFFF" opacity=".9"/>`).join('');
+  } else if (kind === 'cloudy' || kind === 'overcast') {
+    out += veil(kind === 'overcast' ? 0.14 : 0.05);
+    const n = kind === 'overcast' ? 3 : 2;
+    out += Array.from({ length: n }, (_, i) => {
+      const { box: [, , w, h] } = CLOUDS[i % CLOUDS.length];
+      return `<image class="drift" style="animation-delay:-${i * 11}s" href="${layerUrl('cloud', state.phase || 'day', i % CLOUDS.length)}" x="${-30 + i * 140}" y="${40 + (i % 2) * 90}" width="${w * 1.7}" height="${h * 1.7}" opacity="${kind === 'overcast' ? 0.95 : 0.8}"/>`;
+    }).join('');
+  } else if (kind === 'fog') {
+    out += `<defs><linearGradient id="haze" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#F4F2F8" stop-opacity="0"/><stop offset=".5" stop-color="#F4F2F8" stop-opacity=".75"/><stop offset="1" stop-color="#F4F2F8" stop-opacity="0"/></linearGradient></defs>`;
+    out += [[410, 110], [520, 80], [600, 70]].map(([y, h], i) => `<rect class="haze" style="animation-delay:-${i * 9}s" x="-60" y="${y}" width="${W + 120}" height="${h}" fill="url(#haze)"/>`).join('');
+  }
+  g.innerHTML = out;
 }
 
 function lanternSpot(t) {
@@ -310,8 +383,9 @@ function animate(duration, step) {
   });
 }
 
-function label(x, y, text, ms = 2200) {
+function label(x0, y, text, ms = 2200) {
   const w = text.length * 7.6 + 26;
+  const x = Math.min(W - w / 2 - 8, Math.max(w / 2 + 8, x0)); // always fully on screen
   const g = el(`<g class="label" style="animation-duration:${ms}ms" transform="translate(${x} ${y})"><rect x="${-w / 2}" y="-15" width="${w}" height="28" rx="14" fill="#FFF8F1" opacity=".94"/><text y="4" text-anchor="middle">${esc(text)}</text></g>`);
   setTimeout(() => g.remove(), ms);
 }
@@ -485,7 +559,7 @@ function bindGestures(svg) {
     const v = toView(e);
     g = {
       x: e.clientX, y: e.clientY, v, held: false,
-      target: e.target.closest('[data-word],[data-place],[data-plot],[data-mot],[data-lantern],[data-sign],[data-duck],[data-frog],[data-sheep],[data-cat],[data-butterfly]'),
+      target: e.target.closest('[data-word],[data-weather],[data-place],[data-plot],[data-mot],[data-lantern],[data-sign],[data-duck],[data-frog],[data-sheep],[data-cat],[data-butterfly]'),
     };
     svg.setPointerCapture(e.pointerId);
     if (!state.data) return;
@@ -496,7 +570,7 @@ function bindGestures(svg) {
         if (!g) return;
         g.held = true;
         if (t) letGoCard(t.dataset.place);
-        else mapCard();
+        else homeCard();
       }, 550);
     }
   });
@@ -523,6 +597,13 @@ function bindGestures(svg) {
     if (t.dataset.place !== undefined) sendThought(t.dataset.place);
     else if (t.dataset.plot !== undefined) inviteCard();
     else if (t.dataset.sign) openWords(t.dataset.sign);
+    else if (t.dataset.weather) {
+      const p = world().people.find((x) => x.id === t.dataset.weather);
+      if (p?.weather) {
+        const place = PLACE_OF(p);
+        label(place.x, place.y - 96 * place.s, `Chez ${p.name} · ${WEATHER_WORDS[p.weather.kind]} · ${p.weather.temp}°`, 3200);
+      }
+    }
     else if (t.dataset.mot) {
       const p = world().people.find((x) => x.id === t.dataset.lantern);
       label(Number(t.dataset.x), Number(t.dataset.y) - 40, `${p?.name ?? ''} · ${t.dataset.mot}`, 3600);
@@ -547,6 +628,7 @@ function updateHint() {
     if (!people.length) text = 'Touche le petit panneau pour inviter quelqu’un';
     else if (!load('pinged')) text = `Touche ${PLACE_OF(people[0]).the} de ${people[0].name} pour lui envoyer une pensée`;
     else if (signed && !load('signed')) text = `Un signe est apparu avec ${signed.name} : touche-le`;
+    else if (!load('home-card')) text = 'Appui long sur ton ponton : ta carte et ta météo';
   }
   hint.textContent = text;
   hint.classList.toggle('on', Boolean(text));
@@ -644,11 +726,64 @@ async function signup(e) {
   }
 }
 
-function mapCard() {
+// Your own corner: where you live, and whether you share your weather.
+function homeCard() {
+  save('home-card', '1');
+  updateHint();
+  const { me } = state.data;
   openCard(`
-    <h1>Où veux-tu vivre ?</h1>
-    <p class="lead">Tes proches te suivront, chacun à sa place.</p>
-    ${mapTiles(state.data.me.map)}`);
+    <h1>Chez toi</h1>
+    <p class="lead">Où veux-tu vivre ? Tes proches te suivront, chacun à sa place.</p>
+    ${mapTiles(me.map)}
+    <div class="toggle-row">
+      <div><b>Partager ma météo</b><small>Tes proches verront le temps qu'il fait chez toi, à 10 km près. Ta position exacte n'est jamais partagée.</small></div>
+      <button type="button" class="switch ${me.sharesWeather ? 'on' : ''}" role="switch" aria-checked="${me.sharesWeather}" data-act="weather" aria-label="Partager ma météo"><i></i></button>
+    </div>
+    <p class="tiny weather-note"></p>`);
+}
+
+function position() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('Ce téléphone ne donne pas sa position'));
+    return navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: Math.round(pos.coords.latitude * 10) / 10, lon: Math.round(pos.coords.longitude * 10) / 10 }),
+      () => reject(new Error('Sans ta position, pas de météo partagée')),
+      { enableHighAccuracy: false, maximumAge: 3 * 3600000, timeout: 12000 },
+    );
+  });
+}
+
+async function toggleWeather(btn) {
+  const note = $('.weather-note', app);
+  const on = !btn.classList.contains('on');
+  btn.disabled = true;
+  try {
+    if (on) {
+      const where = await position();
+      setData(await api('/api/weather', { method: 'PUT', body: where }));
+      save('geo-at', String(Date.now()));
+    } else {
+      setData(await api('/api/weather', { method: 'DELETE' }));
+    }
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-checked', on);
+    if (note) note.textContent = on ? 'C’est partagé. Tu peux arrêter quand tu veux.' : 'Ta météo n’est plus partagée.';
+  } catch (err) {
+    if (note) note.textContent = err.message;
+  }
+  btn.disabled = false;
+}
+
+// When sharing, quietly follow the person as they travel (only if the phone already allows it).
+async function followWeather() {
+  if (!state.data?.me.sharesWeather) return;
+  if (Date.now() - Number(load('geo-at') || 0) < 6 * 3600000) return;
+  const perm = await navigator.permissions?.query({ name: 'geolocation' }).catch(() => null);
+  if (perm?.state !== 'granted') return;
+  try {
+    setData(await api('/api/weather', { method: 'PUT', body: await position() }));
+    save('geo-at', String(Date.now()));
+  } catch { /* keep the last known weather */ }
 }
 
 function letGoCard(pid) {
@@ -711,6 +846,7 @@ async function onAct(e) {
     case 'close': closeCard(); break;
     case 'share': shareInvite(); break;
     case 'let-go': letGo(btn.dataset.id); break;
+    case 'weather': toggleWeather(btn); break;
     case 'map': {
       btn.parentElement.querySelectorAll('.map').forEach((m) => m.classList.toggle('on', m === btn));
       if (state.data && !btn.closest('form')) {
@@ -781,6 +917,7 @@ async function enablePush() {
 function setData(data) {
   state.data = data;
   if (!state.known) state.known = new Set();
+  drawWeather();
 }
 
 async function refresh() {
@@ -801,6 +938,7 @@ async function wakeUp() {
   if (!$('.world', app)) buildWorld();
   else drawStatic();
   receiveNew();
+  followWeather();
   api('/api/seen', { method: 'POST' }).catch(() => {});
   navigator.clearAppBadge?.()?.catch(() => {});
 }

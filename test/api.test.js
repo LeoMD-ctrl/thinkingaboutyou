@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createApp } from '../src/app.js';
 
 const sent = [];
+const weatherCalls = [];
 let base;
 let app;
 let dir;
@@ -18,6 +19,11 @@ before(async () => {
     sendPush: async (sub, payload) => {
       if (sub.endpoint.includes('gone')) throw Object.assign(new Error('gone'), { statusCode: 410 });
       sent.push({ endpoint: sub.endpoint, ...JSON.parse(payload) });
+    },
+    fetchWeather: async (lat, lon) => {
+      weatherCalls.push([lat, lon]);
+      if (lat === 0) throw new Error('weather service down');
+      return lat > 50 ? { kind: 'snow', temp: -3 } : { kind: 'rain', temp: 12 };
     },
   });
   await new Promise((r) => app.server.listen(0, r));
@@ -143,6 +149,35 @@ test('six places per map, and letting someone go quietly', async () => {
   const host2 = (await call('GET', '/api/me', { token: host.token })).json;
   assert.equal(host2.people.find((p) => p.name === 'En retard').place, 2);
   assert.equal(host2.people.find((p) => p.name === 'Invité 3').place, 3, 'everyone else keeps their place');
+});
+
+test('weather is opt-in, coarse, shared with close ones, and can be stopped', async () => {
+  const a = await signup('Anouk');
+  const b = await signup('Bao', { invite: a.me.code });
+  assert.equal(a.me.sharesWeather, false);
+  assert.equal(b.people[0].weather, null, 'nothing is shared by default');
+
+  // Anouk shares: only coarse coordinates reach the weather service.
+  const shared = (await call('PUT', '/api/weather', { token: a.token, body: { lat: 48.85661, lon: 2.35222 } })).json;
+  assert.deepEqual(weatherCalls.at(-1), [48.9, 2.4]);
+  assert.equal(shared.me.sharesWeather, true);
+  assert.deepEqual(shared.me.weather, { kind: 'rain', temp: 12 });
+  const seen = (await call('GET', '/api/me', { token: b.token })).json.people[0];
+  assert.deepEqual(seen.weather, { kind: 'rain', temp: 12 });
+  assert.equal(JSON.stringify(seen).includes('48.9'), false, 'her position is never shown to others');
+
+  // A failing weather service never breaks the app.
+  const down = await call('PUT', '/api/weather', { token: b.token, body: { lat: 0.02, lon: 0 } });
+  assert.equal(down.status, 200);
+  assert.equal(down.json.me.weather, null);
+
+  assert.equal((await call('PUT', '/api/weather', { token: a.token, body: { lat: 'ici', lon: 2 } })).status, 400);
+
+  // Stopping removes everything.
+  const stopped = (await call('DELETE', '/api/weather', { token: a.token })).json;
+  assert.equal(stopped.me.sharesWeather, false);
+  assert.equal((await call('GET', '/api/me', { token: b.token })).json.people[0].weather, null);
+  assert.equal(app.store.data.users[a.me.id].weather, undefined);
 });
 
 test('guards: auth, strangers, bad codes, dead subscriptions', async () => {

@@ -34,6 +34,10 @@ _Avoid_: avatar, base, chez moi
 L'endroit d'une carte où habite un proche (une maison, un phare, un moulin…). Une carte compte six lieux ; chaque proche reçoit le premier lieu libre et garde son rang quand on change de carte.
 _Avoid_: maison (sauf pour ce lieu précis), slot, place
 
+**Météo**:
+Le temps qu'il fait réellement là où se trouve un compte, s'il a choisi de la partager : elle couvre sa propre carte et apparaît en petit au-dessus de son lieu chez ses proches. Sa position exacte n'est jamais montrée.
+_Avoid_: localisation, position, climat
+
 ## Les gestes
 
 **Pensée**:
@@ -54,8 +58,9 @@ _Avoid_: chemin, match, manque partagé, étoile (quand on parle du concept)
 L'apparence d'un signe la nuit, quelle que soit la carte : une étoile qui brille au-dessus du lieu du proche.
 _Avoid_: rendez-vous, moment
 
-**Arc-en-ciel**:
-L'apparence d'un signe le jour dans la campagne : un arc pastel qui part du point d'ancrage et se pose sur le lieu du proche.
+**Cerf-volant**:
+L'apparence d'un signe le jour dans la campagne : un cerf-volant pastel qui flotte au-dessus du lieu du proche, son fil attaché au toit.
+_Avoid_: arc-en-ciel (abandonné)
 
 **Mot doux**:
 Une pensée accompagnée d'un mot choisi parmi six (« courage ! », « belle journée »…), qu'on ne peut envoyer qu'en touchant un signe, une seule fois par signe. Il compte comme une pensée.
