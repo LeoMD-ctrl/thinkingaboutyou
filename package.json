@@ -1,0 +1,19 @@
+{
+  "name": "pense-a-toi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Un petit pager du cœur : envoyer « je pense à toi » et se trouver un moment pour s'appeler ou se voir.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}

@@ -1,0 +1,3 @@
+# Une web app installable avant une app iOS native
+
+On teste d'abord *Pense à toi* comme une web app installée sur l'écran d'accueil (PWA, avec notifications push web depuis iOS 16.4), servie par un petit serveur Node. On renonce pour l'instant à ce que seule une app native permet : Live Activities, widgets, bouton Action, boutons dans les notifications. La raison : il n'y a ni Mac ni compte Apple Developer, et le but immédiat est un test rapide en famille, envoyé par un simple lien, sans TestFlight. Le serveur et le modèle du domaine sont pensés pour être repris tels quels par une future app SwiftUI.
